@@ -2,33 +2,41 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { listPhotos } from "@/lib/store";
+import AuthMenu from "@/components/AuthMenu";
+import { getCurrentUser, isCloudEnabled } from "@/lib/supabase";
 
 export default function Home() {
-  const [count, setCount] = useState<number | null>(null);
+  const [signedIn, setSignedIn] = useState<boolean>(false);
   useEffect(() => {
-    listPhotos().then((p) => setCount(p.length));
+    if (isCloudEnabled()) {
+      getCurrentUser().then((u) => setSignedIn(!!u));
+    }
   }, []);
 
   return (
     <>
       <div className="max-w-[1280px] mx-auto px-8 relative z-[2]">
         {/* NAV */}
-        <nav className="pt-7 flex justify-between items-center relative z-10">
+        <nav className="pt-7 flex justify-between items-center relative z-10 gap-4">
           <Link href="/" className="flex items-center gap-2.5 font-display text-[26px] font-black tracking-tight text-ink no-underline">
             <span className="logo-mark" />
             <span>PinPoint</span>
           </Link>
-          <ul className="hidden md:flex gap-8 list-none text-sm font-medium tracking-wide">
+          <ul className="hidden md:flex gap-7 list-none text-sm font-medium tracking-wide">
             <li><Link href="/play" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Spielen</Link></li>
             <li><Link href="/lanes" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Lanes</Link></li>
-            <li><Link href="/stats" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Stats</Link></li>
-            <li><Link href="/share" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Teilen</Link></li>
-            <li><Link href="/library" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Bibliothek{count ? ` · ${count}` : ""}</Link></li>
+            <li><Link href="/leaderboard" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Ranking</Link></li>
+            <li><Link href="/duel" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Duell</Link></li>
+            {signedIn && (
+              <li><Link href="/stats" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Stats</Link></li>
+            )}
           </ul>
-          <Link href="/upload" className="btn-pill-dark">
-            Foto hochladen
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link href="/upload" className="hidden sm:inline-flex btn-pill-dark">
+              Foto hochladen
+            </Link>
+            <AuthMenu />
+          </div>
         </nav>
 
         {/* HERO */}
@@ -37,7 +45,7 @@ export default function Home() {
             <div>
               <div className="eyebrow reveal reveal-1 mb-7">
                 <span className="dot" />
-                Beta · Sommer 2026
+                {signedIn ? "Willkommen zurück" : "Beta · Sommer 2026"}
               </div>
               <h1 className="reveal reveal-2 font-display-wonk font-black text-[clamp(48px,8vw,112px)] leading-[0.92] tracking-[-0.045em] text-ink mb-8">
                 Wo war das,<br />
@@ -61,7 +69,7 @@ export default function Home() {
               <div className="reveal reveal-4 mt-12 flex flex-wrap gap-x-8 gap-y-3 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-soft">
                 <div className="flex items-center gap-2">📍 <strong className="text-ink font-bold">Foto rein</strong> — Karte raus</div>
                 <div className="flex items-center gap-2">👥 <strong className="text-ink font-bold">2–50</strong> Freunde</div>
-                <div className="flex items-center gap-2">🏆 <strong className="text-ink font-bold">100 % lokal</strong></div>
+                <div className="flex items-center gap-2">🏆 <strong className="text-ink font-bold">Tägliches</strong> Ranking</div>
               </div>
             </div>
 
@@ -287,7 +295,8 @@ export default function Home() {
             Spiel die Welt<br />deiner <em className="font-light italic" style={{ color: "var(--mustard)" }}>Freunde.</em>
           </h2>
           <p className="text-lg max-w-[540px] mx-auto mb-12" style={{ color: "rgba(241, 231, 208, 0.75)" }}>
-            Lade Fotos hoch, baue eine Memory Lane oder spring in den Daily-Drop. Alles läuft direkt in deinem Browser — keine Server, keine Werbung.
+            Lade Fotos hoch, baue eine Memory Lane oder spring in den Daily-Drop.
+            Spiele privat mit deinem Kreis &mdash; oder global mit Tausenden anderen.
           </p>
           <div className="flex flex-wrap gap-4 justify-center">
             <Link href="/play" className="btn-primary" style={{ background: "var(--paper)", color: "var(--ink)", boxShadow: "4px 4px 0 var(--mustard)" }}>
@@ -298,7 +307,7 @@ export default function Home() {
             </Link>
           </div>
           <div className="mt-6 font-mono text-[11px] uppercase tracking-[0.18em]" style={{ color: "rgba(241, 231, 208, 0.5)" }}>
-            📮 Komplett offline-fähig · keine Anmeldung
+            ✦ DSGVO-konform · EU-Hosting · Kein Werbe-Tracking
           </div>
         </div>
       </section>

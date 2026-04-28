@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import AuthMenu from "./AuthMenu";
 
 interface Props {
   title?: string;
@@ -9,7 +10,7 @@ interface Props {
 
 export default function PageHeader({ rightSlot }: Props) {
   return (
-    <header className="max-w-[1280px] mx-auto px-6 md:px-8 pt-7 pb-5 flex items-center justify-between relative z-10">
+    <header className="max-w-[1280px] mx-auto px-6 md:px-8 pt-7 pb-5 flex items-center justify-between relative z-10 gap-4">
       <Link
         href="/"
         className="flex items-center gap-2.5 font-display text-[22px] md:text-[26px] font-black tracking-tight text-ink no-underline"
@@ -25,7 +26,10 @@ export default function PageHeader({ rightSlot }: Props) {
         <Link href="/stats" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Stats</Link>
         <Link href="/share" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Teilen</Link>
       </nav>
-      {rightSlot}
+      <div className="flex items-center gap-3">
+        {rightSlot}
+        <AuthMenu />
+      </div>
     </header>
   );
 }
