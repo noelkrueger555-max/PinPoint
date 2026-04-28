@@ -25,7 +25,7 @@ git add .
 git commit -m "PinPoint initial"
 
 # Auf github.com → New Repository → "pinpoint" (private oder public)
-git remote add origin git@github.com:DEIN-USER/pinpoint.git
+git remote add origin git@github.com:noelkrueger555-max/PinPoint.git
 git branch -M main
 git push -u origin main
 ```
