@@ -128,7 +128,29 @@ export default function MapPicker({
       });
     }
 
+    // Robust sizing: maplibre needs map.resize() whenever the container
+    // changes size. Modals animate from 0px → final size, flex layouts
+    // settle one frame late, etc. ResizeObserver covers all of these.
+    const ro = new ResizeObserver(() => {
+      try { map.resize(); } catch {}
+    });
+    ro.observe(containerRef.current);
+    // Trigger initial resize after layout has settled.
+    const raf1 = requestAnimationFrame(() => {
+      try { map.resize(); } catch {}
+      const raf2 = requestAnimationFrame(() => {
+        try { map.resize(); } catch {}
+      });
+      (map as unknown as { __raf2?: number }).__raf2 = raf2;
+    });
+    (map as unknown as { __raf1?: number }).__raf1 = raf1;
+
     return () => {
+      ro.disconnect();
+      const r1 = (map as unknown as { __raf1?: number }).__raf1;
+      const r2 = (map as unknown as { __raf2?: number }).__raf2;
+      if (r1) cancelAnimationFrame(r1);
+      if (r2) cancelAnimationFrame(r2);
       map.remove();
       mapRef.current = null;
       userMarkerRef.current = null;

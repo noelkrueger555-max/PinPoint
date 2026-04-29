@@ -61,17 +61,18 @@ export default function Home() {
                 Aus Erinnerungen wird ein Quiz, aus Reisen werden Geschichten.
               </p>
               <div className="reveal reveal-4 flex flex-wrap gap-5 items-center">
-                <Link href="/play" className="btn-primary">
-                  Runde starten
+                <Link href="/play/daily" className="btn-primary">
+                  Battle starten
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                     <path d="M3 8h10m0 0L9 4m4 4L9 12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </Link>
+                <Link href="/duel" className="btn-link">⚔️ vs. Freunde →</Link>
                 <Link href="#how" className="btn-link">So funktioniert&apos;s →</Link>
               </div>
               <div className="reveal reveal-4 mt-12 flex flex-wrap gap-x-8 gap-y-3 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-soft">
-                <div className="flex items-center gap-2">📍 <strong className="text-ink font-bold">Foto rein</strong> — Karte raus</div>
-                <div className="flex items-center gap-2">👥 <strong className="text-ink font-bold">2–50</strong> Freunde</div>
+                <div className="flex items-center gap-2">⚔️ <strong className="text-ink font-bold">Solo oder Battle</strong> — beliebig viele</div>
+                <div className="flex items-center gap-2">👥 <strong className="text-ink font-bold">2–50</strong> Spieler pro Lobby</div>
                 <div className="flex items-center gap-2">🏆 <strong className="text-ink font-bold">Tägliches</strong> Ranking</div>
               </div>
             </div>

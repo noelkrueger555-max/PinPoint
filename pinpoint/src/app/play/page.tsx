@@ -39,7 +39,44 @@ export default function PlayHub() {
         )}
 
         {hasPhotos && (
-          <div className="mt-12 grid grid-cols-1 md:grid-cols-2 gap-7">
+          <>
+            {/* BATTLE row — primary CTA */}
+            <div className="mt-10 grid grid-cols-1 md:grid-cols-2 gap-7">
+              <Link
+                href="/duel"
+                className="paper-card p-8 no-underline text-ink relative block"
+                style={{ transform: "rotate(-0.4deg)", background: "var(--pin)", color: "var(--paper)" }}
+              >
+                <div className="stamp-tag absolute -top-5 right-6" style={{ transform: "rotate(8deg)" }}>LIVE</div>
+                <div className="w-14 h-14 rounded-full flex items-center justify-center mb-5 border-2 border-paper bg-paper text-pin">
+                  <span className="text-2xl">⚔️</span>
+                </div>
+                <span className="tag-pin" style={{ background: "var(--paper)", color: "var(--pin)" }}>Battle · 1 vs 1</span>
+                <h3 className="font-display text-[28px] font-bold tracking-tight mt-1 text-paper">Duell</h3>
+                <p className="text-paper/85 mt-2">Echtzeit-Match gegen einen Freund. Code teilen, gemeinsam raten, größter Score gewinnt.</p>
+                <div className="mt-5 inline-flex items-center gap-1 font-mono text-xs uppercase tracking-wider">
+                  Battle starten →
+                </div>
+              </Link>
+              <Link
+                href="/share"
+                className="paper-card p-8 no-underline text-ink relative block"
+                style={{ transform: "rotate(0.4deg)", background: "var(--postal-blue)", color: "var(--paper)" }}
+              >
+                <div className="w-14 h-14 rounded-full flex items-center justify-center mb-5 border-2 border-paper bg-paper text-postal-blue">
+                  <span className="text-2xl">👥</span>
+                </div>
+                <span className="tag-pin" style={{ background: "var(--paper)", color: "var(--postal-blue)" }}>Battle · 2–50</span>
+                <h3 className="font-display text-[28px] font-bold tracking-tight mt-1 text-paper">Lobby</h3>
+                <p className="text-paper/85 mt-2">Erstelle eine Lobby mit deinen Fotos, teile den 6-Zeichen-Code, ladet beliebig viele Freunde ein.</p>
+                <div className="mt-5 inline-flex items-center gap-1 font-mono text-xs uppercase tracking-wider">
+                  Lobby öffnen →
+                </div>
+              </Link>
+            </div>
+
+            <div className="mt-12 mb-4 section-eyebrow">✦ Solo-Modi</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-7">
             <ModeCard
               href="/play/classic"
               tag="Klassisch · empfohlen"
@@ -82,6 +119,7 @@ export default function PlayHub() {
               icon={<><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><path d="M16 2v4M8 2v4M3 10h18" /></>}
             />
           </div>
+          </>
         )}
 
         <div className="mt-20">
