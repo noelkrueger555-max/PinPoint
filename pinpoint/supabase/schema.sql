@@ -17,13 +17,32 @@ create table if not exists public.profiles (
   bio text,
   created_at timestamptz not null default now()
 );
+
+-- Backfill columns for installs that ran the v1 schema before.
+alter table public.profiles add column if not exists username text;
+alter table public.profiles add column if not exists bio text;
+alter table public.profiles add column if not exists avatar_url text;
+
+do $$ begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'profiles_username_key' and conrelid = 'public.profiles'::regclass
+  ) then
+    alter table public.profiles add constraint profiles_username_key unique (username);
+  end if;
+end $$;
+
 create index if not exists profiles_username_idx on public.profiles(username);
 create index if not exists profiles_display_name_idx on public.profiles(lower(display_name));
 
 -- -----------------------------
 -- Photos
 -- -----------------------------
-create type photo_visibility as enum ('private', 'friends', 'public');
+do $$ begin
+  if not exists (select 1 from pg_type where typname = 'photo_visibility') then
+    create type photo_visibility as enum ('private', 'friends', 'public');
+  end if;
+end $$;
 
 create table if not exists public.photos (
   id uuid primary key default uuid_generate_v4(),
@@ -194,50 +213,71 @@ alter table public.duel_rooms enable row level security;
 alter table public.reports enable row level security;
 
 -- Profiles: self-read+write, public-read of display_name only via view
+drop policy if exists "profiles self read" on public.profiles;
+drop policy if exists "profiles public read" on public.profiles;
+drop policy if exists "profiles self write" on public.profiles;
+drop policy if exists "profiles self update" on public.profiles;
 create policy "profiles self read" on public.profiles for select using (auth.uid() = id);
 create policy "profiles public read" on public.profiles for select using (true);
 create policy "profiles self write" on public.profiles for insert with check (auth.uid() = id);
 create policy "profiles self update" on public.profiles for update using (auth.uid() = id);
 
 -- Photos: owners see their own; everyone sees public+ok.
+drop policy if exists "photos owner all" on public.photos;
+drop policy if exists "photos public read" on public.photos;
 create policy "photos owner all" on public.photos for all using (auth.uid() = owner);
 create policy "photos public read"
   on public.photos for select
   using (visibility = 'public' and moderation_status = 'ok');
 
 -- Lanes: same model
+drop policy if exists "lanes owner all" on public.lanes;
+drop policy if exists "lanes public read" on public.lanes;
 create policy "lanes owner all" on public.lanes for all using (auth.uid() = owner);
 create policy "lanes public read" on public.lanes for select using (visibility = 'public');
 
 -- Lane-photo membership follows the lane
+drop policy if exists "lane_photos owner" on public.lane_photos;
+drop policy if exists "lane_photos public" on public.lane_photos;
 create policy "lane_photos owner" on public.lane_photos for all
   using (exists (select 1 from public.lanes l where l.id = lane_id and l.owner = auth.uid()));
 create policy "lane_photos public" on public.lane_photos for select
   using (exists (select 1 from public.lanes l where l.id = lane_id and l.visibility = 'public'));
 
 -- Lobbies: anyone can SELECT by code (so guests can join), only owner writes
+drop policy if exists "lobbies anyone read" on public.lobbies;
+drop policy if exists "lobbies owner write" on public.lobbies;
 create policy "lobbies anyone read" on public.lobbies for select using (true);
 create policy "lobbies owner write" on public.lobbies for all using (auth.uid() = owner);
 
 -- Sessions / guesses: only the player
+drop policy if exists "sessions player" on public.sessions;
+drop policy if exists "guesses player" on public.guesses;
 create policy "sessions player" on public.sessions for all using (auth.uid() = player);
 create policy "guesses player" on public.guesses for all
   using (exists (select 1 from public.sessions s where s.id = session_id and s.player = auth.uid()));
 
 -- Daily scores: read-all, write-own
+drop policy if exists "daily public read" on public.daily_scores;
+drop policy if exists "daily self write" on public.daily_scores;
 create policy "daily public read" on public.daily_scores for select using (true);
 create policy "daily self write" on public.daily_scores for insert with check (auth.uid() = player);
 
 -- Season scores
+drop policy if exists "season public read" on public.season_scores;
 create policy "season public read" on public.season_scores for select using (true);
 
 -- Duel rooms: read by code, host/challenger write
+drop policy if exists "duel public read" on public.duel_rooms;
+drop policy if exists "duel host insert" on public.duel_rooms;
+drop policy if exists "duel participants update" on public.duel_rooms;
 create policy "duel public read" on public.duel_rooms for select using (true);
 create policy "duel host insert" on public.duel_rooms for insert with check (auth.uid() = host);
 create policy "duel participants update" on public.duel_rooms for update
   using (auth.uid() in (host, challenger));
 
 -- Reports: any auth user can insert, only service role reads
+drop policy if exists "reports insert" on public.reports;
 create policy "reports insert" on public.reports for insert with check (auth.uid() = reporter);
 
 -- ============================================================
@@ -258,6 +298,11 @@ create index if not exists friendships_a_idx on public.friendships(user_a);
 create index if not exists friendships_b_idx on public.friendships(user_b);
 
 alter table public.friendships enable row level security;
+
+drop policy if exists "friendships participants read" on public.friendships;
+drop policy if exists "friendships invite" on public.friendships;
+drop policy if exists "friendships participants update" on public.friendships;
+drop policy if exists "friendships participants delete" on public.friendships;
 
 -- Read: only the two participants.
 create policy "friendships participants read" on public.friendships for select

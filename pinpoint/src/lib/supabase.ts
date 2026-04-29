@@ -73,3 +73,59 @@ export async function getCurrentUser() {
   const { data } = await sb.auth.getUser();
   return data.user;
 }
+
+/**
+ * Email + password registration. The user is signed in immediately if
+ * "Confirm email" is disabled in Supabase Auth (default for new projects).
+ * Otherwise Supabase sends a confirmation link.
+ */
+export async function signUpWithPassword(
+  email: string,
+  password: string,
+  displayName?: string
+) {
+  const sb = getSupabase();
+  if (!sb) throw new Error("Cloud-Modus nicht konfiguriert.");
+  const { data, error } = await sb.auth.signUp({
+    email,
+    password,
+    options: {
+      data: displayName ? { display_name: displayName } : undefined,
+      emailRedirectTo:
+        typeof window !== "undefined" ? window.location.origin : undefined,
+    },
+  });
+  if (error) throw error;
+  return { needsConfirmation: !data.session, user: data.user };
+}
+
+export async function signInWithPassword(email: string, password: string) {
+  const sb = getSupabase();
+  if (!sb) throw new Error("Cloud-Modus nicht konfiguriert.");
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+}
+
+export async function sendPasswordReset(email: string) {
+  const sb = getSupabase();
+  if (!sb) throw new Error("Cloud-Modus nicht konfiguriert.");
+  const { error } = await sb.auth.resetPasswordForEmail(email, {
+    redirectTo:
+      typeof window !== "undefined"
+        ? `${window.location.origin}/`
+        : undefined,
+  });
+  if (error) throw error;
+}
+
+/**
+ * Subscribe to auth state changes. Returns the unsubscribe function.
+ */
+export function onAuthChange(cb: (signedIn: boolean) => void): () => void {
+  const sb = getSupabase();
+  if (!sb) return () => {};
+  const { data } = sb.auth.onAuthStateChange((_event, session) => {
+    cb(!!session);
+  });
+  return () => data.subscription.unsubscribe();
+}

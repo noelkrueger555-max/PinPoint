@@ -5,9 +5,27 @@ import { useEffect, useRef, useState } from "react";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { mapboxStyleUrl, isMapboxEnabled } from "@/lib/mapbox";
 
-// Default fallback: free, no-API-key raster style. Used only when no Mapbox
-// token is configured. Keeps zero server cost on our side.
-const FALLBACK_STYLE_URL = "https://demotiles.maplibre.org/style.json";
+// Default fallback: free OSM raster tiles. Used when no Mapbox token is set
+// or when the Mapbox style fails to load. Keeps the app usable everywhere.
+const FALLBACK_STYLE: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {
+    osm: {
+      type: "raster",
+      tiles: [
+        "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      ],
+      tileSize: 256,
+      attribution: "© OpenStreetMap contributors",
+      maxzoom: 19,
+    },
+  },
+  layers: [
+    { id: "osm", type: "raster", source: "osm" },
+  ],
+};
 
 export interface MapMarker {
   id: string;
@@ -55,10 +73,10 @@ export default function MapPicker({
   // init
   useEffect(() => {
     if (!containerRef.current) return;
-    const styleUrl = mapboxStyleUrl() ?? FALLBACK_STYLE_URL;
+    const styleUrl = mapboxStyleUrl();
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: styleUrl,
+      style: styleUrl ?? FALLBACK_STYLE,
       center: [initialCenter.lng, initialCenter.lat] as LngLatLike,
       zoom: initialZoom,
       attributionControl: { compact: true },
@@ -66,10 +84,25 @@ export default function MapPicker({
     });
     mapRef.current = map;
 
+    let usingFallback = !styleUrl;
     const handleErr = (e: maplibregl.ErrorEvent) => {
       const msg = e?.error?.message || "Tile/Style konnte nicht geladen werden";
-      // Only surface fatal style errors; mute single tile 404s.
-      if (msg.toLowerCase().includes("style") || msg.toLowerCase().includes("token") || msg.toLowerCase().includes("403") || msg.toLowerCase().includes("401")) {
+      const lower = msg.toLowerCase();
+      const fatal =
+        lower.includes("style") ||
+        lower.includes("token") ||
+        lower.includes("403") ||
+        lower.includes("401");
+      // Auto-recover from a Mapbox style failure by switching to OSM fallback.
+      if (fatal && !usingFallback) {
+        usingFallback = true;
+        try {
+          map.setStyle(FALLBACK_STYLE);
+          setTileError("Mapbox-Stil nicht erreichbar — OSM-Fallback aktiv.");
+        } catch {
+          setTileError(msg);
+        }
+      } else if (fatal) {
         setTileError(msg);
       }
       // eslint-disable-next-line no-console
@@ -79,7 +112,7 @@ export default function MapPicker({
 
     if (!isMapboxEnabled()) {
       // eslint-disable-next-line no-console
-      console.warn("[MapPicker] NEXT_PUBLIC_MAPBOX_TOKEN missing at build time — using demotiles fallback. Add the env-var to Vercel and redeploy to get full Mapbox tiles.");
+      console.warn("[MapPicker] NEXT_PUBLIC_MAPBOX_TOKEN missing at build time — using OSM fallback. Add the env-var to Vercel and redeploy to get full Mapbox tiles.");
     }
 
     if (noZoom) {
