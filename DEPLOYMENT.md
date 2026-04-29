@@ -51,8 +51,10 @@ Nach dem Setup → **Settings → API**:
 ### 2.3 Datenbank-Schema einspielen
 1. Im Dashboard → **SQL Editor → New Query**
 2. Inhalt von [pinpoint/supabase/schema.sql](pinpoint/supabase/schema.sql) komplett reinkopieren
-3. **Run** klicken → es sollten Tabellen `profiles`, `photos`, `lanes`, `lane_photos`, `sessions`, `guesses`, `lobbies`, `daily_scores`, `seasons`, `season_scores`, `reports` entstehen
+3. **Run** klicken → es sollten Tabellen `profiles`, `photos`, `lanes`, `lane_photos`, `sessions`, `guesses`, `lobbies`, `daily_scores`, `seasons`, `season_scores`, `reports`, `friendships` entstehen + View `my_friends` + Funktion `send_friend_request`
 4. Verifizieren: **Table Editor** → alle Tabellen sichtbar
+
+> 💡 Schema bereits einmal eingespielt? Lass es einfach nochmal laufen — alle Statements sind `if not exists` / `or replace`. Neu sind: `friendships` Tabelle, `profiles.username`/`bio`, View `my_friends`, RPC `send_friend_request`.
 
 ### 2.4 Storage-Buckets anlegen
 1. **Storage → New bucket**:
@@ -152,6 +154,11 @@ Vor dem ersten Deploy unter **Settings → Environment Variables**:
 | `NEXT_PUBLIC_SUPABASE_URL` | aus 2.2 | Production, Preview, Development |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | aus 2.2 | Production, Preview, Development |
 | `NEXT_PUBLIC_MAPBOX_TOKEN` | aus 3 | Production, Preview, Development |
+
+> ⚠ **Wichtig:** `NEXT_PUBLIC_*`-Variablen werden **beim Build** in den Bundle inlined.
+> Wenn du einen Wert **nach** einem Deploy hinzufügst/änderst, musst du **redeployen**
+> (Deployments → ... → **Redeploy** ohne Cache), sonst sieht der Browser den alten/leeren Wert
+> und z. B. die Karte bleibt blank.
 
 > ⚠ `SUPABASE_SERVICE_ROLE_KEY` **nicht** in Vercel hinzufügen — er gehört nur in die Supabase-Edge-Function, sonst riskiert man einen Bundle-Leak.
 

@@ -9,6 +9,7 @@ import { isCloudEnabled, getCurrentUser, signInWithMagicLink, signInWithGoogle, 
 import { syncAllToCloud } from "@/lib/cloud-sync";
 import { createLobby } from "@/lib/lobby";
 import PageHeader from "@/components/PageHeader";
+import AuthGate from "@/components/AuthGate";
 
 export default function SharePage() {
   const [title, setTitle] = useState("");
@@ -72,7 +73,7 @@ export default function SharePage() {
   };
 
   return (
-    <>
+    <AuthGate>
       <PageHeader />
       <main className="max-w-[1100px] mx-auto px-6 md:px-8 pt-8 pb-20 relative z-[2]">
         <div className="dashed-pill mb-3">📮 Postkarte verschicken</div>
@@ -344,6 +345,6 @@ export default function SharePage() {
           </div>
         )}
       </main>
-    </>
+    </AuthGate>
   );
 }

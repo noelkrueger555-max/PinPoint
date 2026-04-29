@@ -9,6 +9,7 @@ import { GAME_MODE_LABELS } from "@/lib/types";
 import { ACHIEVEMENTS, getUnlocked } from "@/lib/achievements";
 import { isSoundEnabled, setSoundEnabled } from "@/lib/feedback";
 import PageHeader from "@/components/PageHeader";
+import AuthGate from "@/components/AuthGate";
 
 const MapPicker = dynamic(() => import("@/components/MapPicker"), { ssr: false });
 
@@ -51,7 +52,7 @@ export default function StatsPage() {
   ];
 
   return (
-    <>
+    <AuthGate>
       <PageHeader
         rightSlot={
           <div className="flex items-center gap-3">
@@ -181,6 +182,6 @@ export default function StatsPage() {
           )}
         </div>
       </main>
-    </>
+    </AuthGate>
   );
 }

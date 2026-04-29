@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { deletePhoto, listPhotos } from "@/lib/store";
 import { DIFFICULTY_LABELS, type Photo } from "@/lib/types";
 import PageHeader from "@/components/PageHeader";
+import AuthGate from "@/components/AuthGate";
 
 export default function LibraryPage() {
   const [photos, setPhotos] = useState<Photo[]>([]);
@@ -36,7 +37,7 @@ export default function LibraryPage() {
   };
 
   return (
-    <>
+    <AuthGate>
       <PageHeader
         rightSlot={
           <Link href="/upload" className="btn-pill-dark">
@@ -92,6 +93,6 @@ export default function LibraryPage() {
           </div>
         )}
       </main>
-    </>
+    </AuthGate>
   );
 }

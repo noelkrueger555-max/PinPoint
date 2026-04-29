@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import Game from "@/components/Game";
+import AuthGate from "@/components/AuthGate";
 
 function LaneInner() {
   const [id, setId] = useState<string | null>(null);
@@ -21,14 +22,16 @@ function LaneInner() {
 
 export default function LaneGame() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex items-center justify-center h-screen text-slate-400">
-          Lade…
-        </div>
-      }
-    >
-      <LaneInner />
-    </Suspense>
+    <AuthGate>
+      <Suspense
+        fallback={
+          <div className="flex items-center justify-center h-screen text-slate-400">
+            Lade…
+          </div>
+        }
+      >
+        <LaneInner />
+      </Suspense>
+    </AuthGate>
   );
 }

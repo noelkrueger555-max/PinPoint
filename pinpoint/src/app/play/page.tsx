@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { listLanes, listPhotos } from "@/lib/store";
 import type { Lane, Photo } from "@/lib/types";
 import PageHeader from "@/components/PageHeader";
+import AuthGate from "@/components/AuthGate";
 
 export default function PlayHub() {
   const [photos, setPhotos] = useState<Photo[]>([]);
@@ -18,7 +19,7 @@ export default function PlayHub() {
   const hasPhotos = photos.length > 0;
 
   return (
-    <>
+    <AuthGate reason={<>Sign-in, dann <em className="accent-italic">los geht’s</em>.</>}>
       <PageHeader />
       <main className="max-w-[1280px] mx-auto px-6 md:px-8 pt-8 pb-24 relative z-[2]">
         <div className="mb-3 dashed-pill">▴ Modus wählen</div>
@@ -121,7 +122,7 @@ export default function PlayHub() {
           )}
         </div>
       </main>
-    </>
+    </AuthGate>
   );
 }
 

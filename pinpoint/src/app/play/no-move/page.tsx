@@ -1,5 +1,10 @@
 import Game from "@/components/Game";
+import AuthGate from "@/components/AuthGate";
 
 export default function NoMoveGame() {
-  return <Game mode="no-move" />;
+  return (
+    <AuthGate>
+      <Game mode="no-move" />
+    </AuthGate>
+  );
 }

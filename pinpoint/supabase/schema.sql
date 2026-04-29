@@ -12,9 +12,13 @@ create extension if not exists "uuid-ossp";
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text not null default 'Spieler',
+  username text unique,                 -- handle for friend-search (lowercase)
   avatar_url text,
+  bio text,
   created_at timestamptz not null default now()
 );
+create index if not exists profiles_username_idx on public.profiles(username);
+create index if not exists profiles_display_name_idx on public.profiles(lower(display_name));
 
 -- -----------------------------
 -- Photos
@@ -235,6 +239,84 @@ create policy "duel participants update" on public.duel_rooms for update
 
 -- Reports: any auth user can insert, only service role reads
 create policy "reports insert" on public.reports for insert with check (auth.uid() = reporter);
+
+-- ============================================================
+-- Friendships (Phase 5b)
+-- ============================================================
+-- Symmetric pair stored once with user_a < user_b. Status drives invite UX.
+create table if not exists public.friendships (
+  user_a uuid not null references public.profiles(id) on delete cascade,
+  user_b uuid not null references public.profiles(id) on delete cascade,
+  requested_by uuid not null references public.profiles(id) on delete cascade,
+  status text not null default 'pending' check (status in ('pending','accepted','blocked')),
+  created_at timestamptz not null default now(),
+  accepted_at timestamptz,
+  primary key (user_a, user_b),
+  check (user_a < user_b)
+);
+create index if not exists friendships_a_idx on public.friendships(user_a);
+create index if not exists friendships_b_idx on public.friendships(user_b);
+
+alter table public.friendships enable row level security;
+
+-- Read: only the two participants.
+create policy "friendships participants read" on public.friendships for select
+  using (auth.uid() in (user_a, user_b));
+
+-- Insert: caller must be one side AND must be requested_by.
+create policy "friendships invite" on public.friendships for insert
+  with check (
+    auth.uid() in (user_a, user_b)
+    and auth.uid() = requested_by
+  );
+
+-- Update: either participant may accept / block / cancel.
+create policy "friendships participants update" on public.friendships for update
+  using (auth.uid() in (user_a, user_b));
+
+-- Delete: either participant may remove the friendship.
+create policy "friendships participants delete" on public.friendships for delete
+  using (auth.uid() in (user_a, user_b));
+
+-- Helper: send a friend request without worrying about user-ordering.
+create or replace function public.send_friend_request(target uuid)
+returns void language plpgsql security definer as $$
+declare
+  ua uuid; ub uuid;
+begin
+  if target = auth.uid() then
+    raise exception 'cannot befriend yourself';
+  end if;
+  if auth.uid() < target then
+    ua := auth.uid(); ub := target;
+  else
+    ua := target;     ub := auth.uid();
+  end if;
+  insert into public.friendships (user_a, user_b, requested_by, status)
+  values (ua, ub, auth.uid(), 'pending')
+  on conflict (user_a, user_b) do nothing;
+end; $$;
+
+revoke all on function public.send_friend_request(uuid) from public;
+grant execute on function public.send_friend_request(uuid) to authenticated;
+
+-- View: expanded friend rows from the perspective of the current user.
+create or replace view public.my_friends as
+  select
+    case when f.user_a = auth.uid() then f.user_b else f.user_a end as friend_id,
+    p.display_name,
+    p.username,
+    p.avatar_url,
+    f.status,
+    f.requested_by,
+    f.created_at,
+    f.accepted_at
+  from public.friendships f
+  join public.profiles p
+    on p.id = case when f.user_a = auth.uid() then f.user_b else f.user_a end
+  where auth.uid() in (f.user_a, f.user_b);
+
+grant select on public.my_friends to authenticated;
 
 -- ============================================================
 -- Helpful views

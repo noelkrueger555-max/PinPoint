@@ -24,6 +24,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { deleteLane, listLanes, listPhotos, newId, saveLane } from "@/lib/store";
 import type { Lane, Photo } from "@/lib/types";
 import PageHeader from "@/components/PageHeader";
+import AuthGate from "@/components/AuthGate";
 
 export default function LanesPage() {
   const [lanes, setLanes] = useState<Lane[]>([]);
@@ -58,7 +59,7 @@ export default function LanesPage() {
   };
 
   return (
-    <>
+    <AuthGate>
       <PageHeader
         rightSlot={
           <button
@@ -157,7 +158,7 @@ export default function LanesPage() {
           />
         )}
       </AnimatePresence>
-    </>
+    </AuthGate>
   );
 }
 

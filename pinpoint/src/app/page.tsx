@@ -28,7 +28,10 @@ export default function Home() {
             <li><Link href="/leaderboard" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Ranking</Link></li>
             <li><Link href="/duel" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Duell</Link></li>
             {signedIn && (
-              <li><Link href="/stats" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Stats</Link></li>
+              <>
+                <li><Link href="/friends" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Freunde</Link></li>
+                <li><Link href="/stats" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Stats</Link></li>
+              </>
             )}
           </ul>
           <div className="flex items-center gap-3">
@@ -305,9 +308,6 @@ export default function Home() {
             <Link href="/upload" className="btn-ghost" style={{ borderColor: "var(--paper)", color: "var(--paper)" }}>
               Foto hochladen
             </Link>
-          </div>
-          <div className="mt-6 font-mono text-[11px] uppercase tracking-[0.18em]" style={{ color: "rgba(241, 231, 208, 0.5)" }}>
-            ✦ DSGVO-konform · EU-Hosting · Kein Werbe-Tracking
           </div>
         </div>
       </section>

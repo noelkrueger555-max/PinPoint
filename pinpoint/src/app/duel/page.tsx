@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Swords, Users, Loader2, Copy } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
+import AuthGate from "@/components/AuthGate";
 import { isCloudEnabled, getCurrentUser } from "@/lib/supabase";
 import { createDuelRoom, joinDuelRoom, type DuelRoom } from "@/lib/duel";
 import { listPhotos } from "@/lib/store";
@@ -49,7 +50,7 @@ export default function DuelPage() {
   };
 
   return (
-    <>
+    <AuthGate reason={<>Duell-Modus braucht ein <em className="accent-italic">Konto</em>.</>}>
       <PageHeader />
       <main className="max-w-[1100px] mx-auto px-6 md:px-8 pt-8 pb-20 relative z-[2]">
         <div className="dashed-pill mb-3">⚔ Realtime · 1 vs. 1</div>
@@ -147,6 +148,6 @@ export default function DuelPage() {
           </div>
         )}
       </main>
-    </>
+    </AuthGate>
   );
 }

@@ -1,9 +1,9 @@
 "use client";
 
 import maplibregl, { type LngLatLike, type Map as MlMap } from "maplibre-gl";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { mapboxStyleUrl } from "@/lib/mapbox";
+import { mapboxStyleUrl, isMapboxEnabled } from "@/lib/mapbox";
 
 // Default fallback: free, no-API-key raster style. Used only when no Mapbox
 // token is configured. Keeps zero server cost on our side.
@@ -49,20 +49,38 @@ export default function MapPicker({
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   const otherMarkersRef = useRef<maplibregl.Marker[]>([]);
   const onPickRef = useRef(onPick);
+  const [tileError, setTileError] = useState<string | null>(null);
   useEffect(() => { onPickRef.current = onPick; }, [onPick]);
 
   // init
   useEffect(() => {
     if (!containerRef.current) return;
+    const styleUrl = mapboxStyleUrl() ?? FALLBACK_STYLE_URL;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: mapboxStyleUrl() ?? FALLBACK_STYLE_URL,
+      style: styleUrl,
       center: [initialCenter.lng, initialCenter.lat] as LngLatLike,
       zoom: initialZoom,
       attributionControl: { compact: true },
       interactive,
     });
     mapRef.current = map;
+
+    const handleErr = (e: maplibregl.ErrorEvent) => {
+      const msg = e?.error?.message || "Tile/Style konnte nicht geladen werden";
+      // Only surface fatal style errors; mute single tile 404s.
+      if (msg.toLowerCase().includes("style") || msg.toLowerCase().includes("token") || msg.toLowerCase().includes("403") || msg.toLowerCase().includes("401")) {
+        setTileError(msg);
+      }
+      // eslint-disable-next-line no-console
+      console.warn("[MapPicker] map error:", msg, e);
+    };
+    map.on("error", handleErr);
+
+    if (!isMapboxEnabled()) {
+      // eslint-disable-next-line no-console
+      console.warn("[MapPicker] NEXT_PUBLIC_MAPBOX_TOKEN missing at build time — using demotiles fallback. Add the env-var to Vercel and redeploy to get full Mapbox tiles.");
+    }
 
     if (noZoom) {
       map.scrollZoom.disable();
@@ -177,5 +195,14 @@ export default function MapPicker({
     else map.once("load", apply);
   }, [fitBoundsTo]);
 
-  return <div ref={containerRef} className={className ?? "h-full w-full"} />;
+  return (
+    <div className={`relative ${className ?? "h-full w-full min-h-[320px]"}`}>
+      <div ref={containerRef} className="absolute inset-0" />
+      {tileError && (
+        <div className="absolute top-2 left-2 right-2 z-10 paper-card-soft p-3 text-xs font-mono text-pin border border-pin/40 pointer-events-none">
+          Karte: {tileError}. Prüfe NEXT_PUBLIC_MAPBOX_TOKEN + Mapbox-URL-Allowlist.
+        </div>
+      )}
+    </div>
+  );
 }
