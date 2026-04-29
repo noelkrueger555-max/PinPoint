@@ -23,6 +23,7 @@ const FALLBACK_STYLE: maplibregl.StyleSpecification = {
     },
   },
   layers: [
+    { id: "osm-bg", type: "background", paint: { "background-color": "#dfd6bd" } },
     { id: "osm", type: "raster", source: "osm" },
   ],
 };
@@ -50,6 +51,21 @@ export interface MapPickerProps {
   className?: string;
 }
 
+// Probe the Mapbox style URL once per session — if it 401/403s we skip it
+// entirely and start with the OSM fallback (avoids a blank canvas while
+// maplibre waits on a never-arriving style).
+let mapboxStyleOk: boolean | null = null;
+async function probeMapboxStyle(url: string): Promise<boolean> {
+  if (mapboxStyleOk !== null) return mapboxStyleOk;
+  try {
+    const res = await fetch(url, { method: "GET", cache: "no-store" });
+    mapboxStyleOk = res.ok;
+  } catch {
+    mapboxStyleOk = false;
+  }
+  return mapboxStyleOk;
+}
+
 export default function MapPicker({
   initialCenter = { lat: 20, lng: 0 },
   initialZoom = 1.5,
@@ -68,93 +84,161 @@ export default function MapPicker({
   const otherMarkersRef = useRef<maplibregl.Marker[]>([]);
   const onPickRef = useRef(onPick);
   const [tileError, setTileError] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
   useEffect(() => { onPickRef.current = onPick; }, [onPick]);
 
-  // init
+  // init — but only AFTER the container has a non-zero size. This is critical
+  // for maps that mount inside an animated modal: maplibre captures the
+  // container size at construction time, and if that's 0×0 the WebGL canvas
+  // is created at 0px and never recovers visually.
   useEffect(() => {
-    if (!containerRef.current) return;
-    const styleUrl = mapboxStyleUrl();
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      style: styleUrl ?? FALLBACK_STYLE,
-      center: [initialCenter.lng, initialCenter.lat] as LngLatLike,
-      zoom: initialZoom,
-      attributionControl: { compact: true },
-      interactive,
-    });
-    mapRef.current = map;
+    const el = containerRef.current;
+    if (!el) return;
 
-    let usingFallback = !styleUrl;
-    const handleErr = (e: maplibregl.ErrorEvent) => {
-      const msg = e?.error?.message || "Tile/Style konnte nicht geladen werden";
-      const lower = msg.toLowerCase();
-      const fatal =
-        lower.includes("style") ||
-        lower.includes("token") ||
-        lower.includes("403") ||
-        lower.includes("401");
-      // Auto-recover from a Mapbox style failure by switching to OSM fallback.
-      if (fatal && !usingFallback) {
-        usingFallback = true;
-        try {
-          map.setStyle(FALLBACK_STYLE);
+    let cancelled = false;
+    let map: MlMap | null = null;
+    let ro: ResizeObserver | null = null;
+    let winResize: (() => void) | null = null;
+    const rafIds: number[] = [];
+
+    const start = async () => {
+      // Wait until the container actually has a measurable size.
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (cancelled) return resolve();
+          if (el.clientWidth > 0 && el.clientHeight > 0) return resolve();
+          rafIds.push(requestAnimationFrame(check));
+        };
+        check();
+      });
+      if (cancelled) return;
+
+      // Decide on initial style. If a Mapbox token exists but the style
+      // endpoint isn't reachable (URL allow-list, expired token, network
+      // block), skip straight to OSM so the user always sees a map.
+      const url = mapboxStyleUrl();
+      let initialStyle: maplibregl.StyleSpecification | string = FALLBACK_STYLE;
+      let usingFallback = true;
+      if (url) {
+        const ok = await probeMapboxStyle(url);
+        if (cancelled) return;
+        if (ok) {
+          initialStyle = url;
+          usingFallback = false;
+        } else {
           setTileError("Mapbox-Stil nicht erreichbar — OSM-Fallback aktiv.");
-        } catch {
+          // eslint-disable-next-line no-console
+          console.warn(
+            "[MapPicker] Mapbox style probe failed (token/allowlist?). Using OSM fallback."
+          );
+        }
+      } else if (!isMapboxEnabled()) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[MapPicker] NEXT_PUBLIC_MAPBOX_TOKEN missing — using OSM fallback."
+        );
+      }
+
+      try {
+        map = new maplibregl.Map({
+          container: el,
+          style: initialStyle,
+          center: [initialCenter.lng, initialCenter.lat] as LngLatLike,
+          zoom: initialZoom,
+          attributionControl: { compact: true },
+          interactive,
+          fadeDuration: 0,
+        });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[MapPicker] map construction failed:", err);
+        setTileError("Karte konnte nicht initialisiert werden.");
+        return;
+      }
+      mapRef.current = map;
+
+      const handleErr = (e: maplibregl.ErrorEvent) => {
+        const msg = e?.error?.message || "Tile/Style konnte nicht geladen werden";
+        const lower = msg.toLowerCase();
+        const fatal =
+          lower.includes("style") ||
+          lower.includes("token") ||
+          lower.includes("403") ||
+          lower.includes("401");
+        if (fatal && !usingFallback && map) {
+          usingFallback = true;
+          mapboxStyleOk = false;
+          try {
+            map.setStyle(FALLBACK_STYLE);
+            setTileError("Mapbox-Stil nicht erreichbar — OSM-Fallback aktiv.");
+          } catch {
+            setTileError(msg);
+          }
+        } else if (fatal) {
           setTileError(msg);
         }
-      } else if (fatal) {
-        setTileError(msg);
+        // eslint-disable-next-line no-console
+        console.warn("[MapPicker] map error:", msg);
+      };
+      map.on("error", handleErr);
+
+      if (noZoom) {
+        map.scrollZoom.disable();
+        map.doubleClickZoom.disable();
+        map.touchZoomRotate.disable();
+        map.boxZoom.disable();
       }
-      // eslint-disable-next-line no-console
-      console.warn("[MapPicker] map error:", msg, e);
-    };
-    map.on("error", handleErr);
 
-    if (!isMapboxEnabled()) {
-      // eslint-disable-next-line no-console
-      console.warn("[MapPicker] NEXT_PUBLIC_MAPBOX_TOKEN missing at build time — using OSM fallback. Add the env-var to Vercel and redeploy to get full Mapbox tiles.");
-    }
+      if (interactive) {
+        map.on("click", (e) => {
+          onPickRef.current?.(e.lngLat.lat, e.lngLat.lng);
+        });
+      }
 
-    if (noZoom) {
-      map.scrollZoom.disable();
-      map.doubleClickZoom.disable();
-      map.touchZoomRotate.disable();
-      map.boxZoom.disable();
-    }
-
-    if (interactive) {
-      map.on("click", (e) => {
-        onPickRef.current?.(e.lngLat.lat, e.lngLat.lng);
-      });
-    }
-
-    // Robust sizing: maplibre needs map.resize() whenever the container
-    // changes size. Modals animate from 0px → final size, flex layouts
-    // settle one frame late, etc. ResizeObserver covers all of these.
-    const ro = new ResizeObserver(() => {
-      try { map.resize(); } catch {}
-    });
-    ro.observe(containerRef.current);
-    // Trigger initial resize after layout has settled.
-    const raf1 = requestAnimationFrame(() => {
-      try { map.resize(); } catch {}
-      const raf2 = requestAnimationFrame(() => {
+      const safeResize = () => {
+        if (!map) return;
         try { map.resize(); } catch {}
+      };
+
+      // Aggressive resize: ResizeObserver + several rAFs + window resize.
+      ro = new ResizeObserver(safeResize);
+      ro.observe(el);
+
+      const queueResizes = (count: number) => {
+        if (count <= 0) return;
+        rafIds.push(
+          requestAnimationFrame(() => {
+            safeResize();
+            queueResizes(count - 1);
+          })
+        );
+      };
+      queueResizes(8);
+
+      map.once("load", () => {
+        safeResize();
+        rafIds.push(requestAnimationFrame(safeResize));
+        if (!cancelled) setReady(true);
       });
-      (map as unknown as { __raf2?: number }).__raf2 = raf2;
-    });
-    (map as unknown as { __raf1?: number }).__raf1 = raf1;
+
+      winResize = safeResize;
+      window.addEventListener("resize", winResize);
+    };
+
+    start();
 
     return () => {
-      ro.disconnect();
-      const r1 = (map as unknown as { __raf1?: number }).__raf1;
-      const r2 = (map as unknown as { __raf2?: number }).__raf2;
-      if (r1) cancelAnimationFrame(r1);
-      if (r2) cancelAnimationFrame(r2);
-      map.remove();
+      cancelled = true;
+      rafIds.forEach((id) => cancelAnimationFrame(id));
+      if (ro) ro.disconnect();
+      if (winResize) window.removeEventListener("resize", winResize);
+      const m = mapRef.current;
+      if (m) {
+        try { m.remove(); } catch {}
+      }
       mapRef.current = null;
       userMarkerRef.current = null;
-      otherMarkersRef.current.forEach((m) => m.remove());
+      otherMarkersRef.current.forEach((mk) => mk.remove());
       otherMarkersRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -163,7 +247,7 @@ export default function MapPicker({
   // user marker
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !ready) return;
     if (marker) {
       if (!userMarkerRef.current) {
         const el = document.createElement("div");
@@ -178,12 +262,12 @@ export default function MapPicker({
       userMarkerRef.current.remove();
       userMarkerRef.current = null;
     }
-  }, [marker]);
+  }, [marker, ready]);
 
   // extra markers (e.g. real location on reveal)
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !ready) return;
     otherMarkersRef.current.forEach((m) => m.remove());
     otherMarkersRef.current = [];
     if (markers) {
@@ -197,7 +281,7 @@ export default function MapPicker({
         otherMarkersRef.current.push(mk);
       }
     }
-  }, [markers]);
+  }, [markers, ready]);
 
   // line
   useEffect(() => {
@@ -205,38 +289,42 @@ export default function MapPicker({
     if (!map) return;
     const apply = () => {
       const SOURCE = "pp-line";
-      if (map.getLayer(SOURCE)) map.removeLayer(SOURCE);
-      if (map.getSource(SOURCE)) map.removeSource(SOURCE);
+      try {
+        if (map.getLayer(SOURCE)) map.removeLayer(SOURCE);
+        if (map.getSource(SOURCE)) map.removeSource(SOURCE);
+      } catch {}
       if (!line) return;
-      map.addSource(SOURCE, {
-        type: "geojson",
-        data: {
-          type: "Feature",
-          properties: {},
-          geometry: {
-            type: "LineString",
-            coordinates: [
-              [line.from.lng, line.from.lat],
-              [line.to.lng, line.to.lat],
-            ],
+      try {
+        map.addSource(SOURCE, {
+          type: "geojson",
+          data: {
+            type: "Feature",
+            properties: {},
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [line.from.lng, line.from.lat],
+                [line.to.lng, line.to.lat],
+              ],
+            },
           },
-        },
-      });
-      map.addLayer({
-        id: SOURCE,
-        type: "line",
-        source: SOURCE,
-        layout: { "line-join": "round", "line-cap": "round" },
-        paint: {
-          "line-color": "#c33129",
-          "line-width": 2.5,
-          "line-dasharray": [2, 2.5],
-        },
-      });
+        });
+        map.addLayer({
+          id: SOURCE,
+          type: "line",
+          source: SOURCE,
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: {
+            "line-color": "#c33129",
+            "line-width": 2.5,
+            "line-dasharray": [2, 2.5],
+          },
+        });
+      } catch {}
     };
     if (map.isStyleLoaded()) apply();
     else map.once("load", apply);
-  }, [line]);
+  }, [line, ready]);
 
   // fit bounds
   useEffect(() => {
@@ -244,18 +332,33 @@ export default function MapPicker({
     if (!map || !fitBoundsTo || fitBoundsTo.length === 0) return;
     const bounds = new maplibregl.LngLatBounds();
     fitBoundsTo.forEach((p) => bounds.extend([p.lng, p.lat]));
-    const apply = () =>
-      map.fitBounds(bounds, { padding: 80, duration: 1200, maxZoom: 8 });
+    const apply = () => {
+      try { map.resize(); } catch {}
+      try { map.fitBounds(bounds, { padding: 80, duration: 1200, maxZoom: 8 }); } catch {}
+    };
     if (map.isStyleLoaded()) apply();
     else map.once("load", apply);
-  }, [fitBoundsTo]);
+  }, [fitBoundsTo, ready]);
 
   return (
-    <div className={`relative ${className ?? "h-full w-full min-h-[320px]"}`}>
-      <div ref={containerRef} className="absolute inset-0" />
+    <div
+      className={`relative ${className ?? "h-full w-full min-h-[320px]"}`}
+      style={{ minHeight: 320 }}
+    >
+      <div
+        ref={containerRef}
+        className="absolute inset-0"
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          background: "#e9dfc4",
+        }}
+      />
       {tileError && (
         <div className="absolute top-2 left-2 right-2 z-10 paper-card-soft p-3 text-xs font-mono text-pin border border-pin/40 pointer-events-none">
-          Karte: {tileError}. Prüfe NEXT_PUBLIC_MAPBOX_TOKEN + Mapbox-URL-Allowlist.
+          Karte: {tileError}
         </div>
       )}
     </div>
