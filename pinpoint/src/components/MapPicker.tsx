@@ -100,6 +100,7 @@ export default function MapPicker({
     let ro: ResizeObserver | null = null;
     let winResize: (() => void) | null = null;
     const rafIds: number[] = [];
+    const timeouts: number[] = [];
 
     const start = async () => {
       // Wait until the container actually has a measurable size.
@@ -164,13 +165,16 @@ export default function MapPicker({
           lower.includes("style") ||
           lower.includes("token") ||
           lower.includes("403") ||
-          lower.includes("401");
+          lower.includes("401") ||
+          lower.includes("forbidden") ||
+          lower.includes("unauthorized") ||
+          lower.includes("ajax");
         if (fatal && !usingFallback && map) {
           usingFallback = true;
           mapboxStyleOk = false;
           try {
             map.setStyle(FALLBACK_STYLE);
-            setTileError("Mapbox-Stil nicht erreichbar — OSM-Fallback aktiv.");
+            setTileError("Mapbox-Stil/Tiles nicht erreichbar — OSM-Fallback aktiv.");
           } catch {
             setTileError(msg);
           }
@@ -181,6 +185,24 @@ export default function MapPicker({
         console.warn("[MapPicker] map error:", msg);
       };
       map.on("error", handleErr);
+
+      // Watchdog: if Mapbox style is selected but no tiles paint within 4s,
+      // assume the tile endpoint is blocked (URL allow-list) and swap to OSM.
+      if (!usingFallback && map) {
+        const watchdog = window.setTimeout(() => {
+          if (cancelled || !map) return;
+          const loaded = map.areTilesLoaded?.();
+          if (!loaded && !usingFallback) {
+            usingFallback = true;
+            mapboxStyleOk = false;
+            try {
+              map.setStyle(FALLBACK_STYLE);
+              setTileError("Mapbox-Tiles nicht erreichbar — OSM-Fallback aktiv.");
+            } catch {}
+          }
+        }, 4000);
+        timeouts.push(watchdog as unknown as number);
+      }
 
       if (noZoom) {
         map.scrollZoom.disable();
@@ -230,6 +252,7 @@ export default function MapPicker({
     return () => {
       cancelled = true;
       rafIds.forEach((id) => cancelAnimationFrame(id));
+      timeouts.forEach((id) => clearTimeout(id));
       if (ro) ro.disconnect();
       if (winResize) window.removeEventListener("resize", winResize);
       const m = mapRef.current;

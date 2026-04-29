@@ -322,7 +322,7 @@ export default function PhotoUpload({ onSaved }: { onSaved?: () => void }) {
                   }
                 />
               </div>
-              <div className="flex-1 relative">
+              <div className="flex-1 relative min-h-[320px]" style={{ minHeight: 320 }}>
                 <MapPicker
                   marker={
                     active.lat != null && active.lng != null

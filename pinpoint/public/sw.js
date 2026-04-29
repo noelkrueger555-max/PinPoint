@@ -1,5 +1,5 @@
 // PinPoint Service Worker — minimal offline shell + runtime caching
-const CACHE = "pinpoint-v1";
+const CACHE = "pinpoint-v3";
 const PRECACHE = ["/", "/play", "/library", "/lanes", "/upload", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
