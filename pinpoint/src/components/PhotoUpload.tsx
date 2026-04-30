@@ -7,7 +7,11 @@ import dynamic from "next/dynamic";
 import { useCallback, useState } from "react";
 import { readExif } from "@/lib/exif";
 import { estimateDifficulty } from "@/lib/difficulty";
+import { stripMetadata } from "@/lib/image";
 import { savePhoto, newId } from "@/lib/store";
+import { uploadPhoto } from "@/lib/cloud-sync";
+import { isCloudEnabled } from "@/lib/supabase";
+import { toast } from "@/lib/toast";
 import {
   DIFFICULTY_COLORS,
   DIFFICULTY_LABELS,
@@ -30,9 +34,13 @@ interface PendingPhoto {
   difficulty: Difficulty;
   autoDifficulty?: Difficulty;
   caption: string;
+  hints: string[];
+  story: string;
   source: "exif" | "manual";
   saving?: boolean;
   saved?: boolean;
+  exifMissing?: boolean;
+  cloudError?: string;
 }
 
 export default function PhotoUpload({ onSaved }: { onSaved?: () => void }) {
@@ -44,7 +52,13 @@ export default function PhotoUpload({ onSaved }: { onSaved?: () => void }) {
     const arr = Array.from(files).filter((f) => f.type.startsWith("image/"));
     for (const file of arr) {
       const id = newId();
-      // compress to ~1.6MB max, max 2048px on long side — keeps it snappy & cheap
+
+      // 1) Read EXIF FIRST from the original file. image-compression strips
+      //    metadata when re-encoding to JPEG, so the original is the only
+      //    reliable source of GPS / DateTimeOriginal.
+      const exif = await readExif(file);
+
+      // 2) Compress for storage / upload.
       let compressed: Blob = file;
       try {
         compressed = await imageCompression(file, {
@@ -57,6 +71,11 @@ export default function PhotoUpload({ onSaved }: { onSaved?: () => void }) {
       } catch {
         // fall back to raw file
       }
+      // 2b) Hard-strip metadata via Canvas re-encode. Guarantees no GPS/XMP
+      //     can leak when a user later switches the photo to public.
+      try {
+        compressed = await stripMetadata(compressed, 0.85);
+      } catch {}
       let thumb: Blob = compressed;
       try {
         thumb = await imageCompression(compressed as File, {
@@ -68,13 +87,13 @@ export default function PhotoUpload({ onSaved }: { onSaved?: () => void }) {
         });
       } catch {}
 
-      const exif = await readExif(file);
       let auto: Difficulty | undefined;
       try {
         auto = await estimateDifficulty(thumb);
       } catch {}
 
       const previewUrl = URL.createObjectURL(thumb);
+      const hasGps = exif.lat != null && exif.lng != null;
       setPending((prev) => [
         ...prev,
         {
@@ -89,10 +108,13 @@ export default function PhotoUpload({ onSaved }: { onSaved?: () => void }) {
           difficulty: auto ?? 3,
           autoDifficulty: auto,
           caption: "",
-          source: exif.lat != null && exif.lng != null ? "exif" : "manual",
+          hints: [],
+          story: "",
+          source: hasGps ? "exif" : "manual",
+          exifMissing: !hasGps,
         },
       ]);
-      if (exif.lat == null || exif.lng == null) {
+      if (!hasGps) {
         setActiveId(id);
       }
     }
@@ -123,6 +145,7 @@ export default function PhotoUpload({ onSaved }: { onSaved?: () => void }) {
       return;
     }
     updatePending(p.id, { saving: true });
+    const cleanHints = p.hints.map((h) => h.trim()).filter(Boolean);
     const photo: Photo = {
       id: p.id,
       blob: p.blob,
@@ -130,13 +153,33 @@ export default function PhotoUpload({ onSaved }: { onSaved?: () => void }) {
       lat: p.lat,
       lng: p.lng,
       takenAt: p.takenAt,
-      caption: p.caption || undefined,
+      caption: p.caption.trim() || undefined,
+      hints: cleanHints.length > 0 ? cleanHints : undefined,
+      story: p.story.trim() || undefined,
       difficulty: p.difficulty,
       autoDifficulty: p.autoDifficulty,
       source: p.source,
       createdAt: Date.now(),
     };
     await savePhoto(photo);
+    // Cloud-first: upload immediately so other devices see it. Local
+    // IndexedDB stays as the offline cache for blobs we already have.
+    if (isCloudEnabled()) {
+      try {
+        await uploadPhoto(photo, "private");
+      } catch (err) {
+        console.warn("[upload] cloud sync failed", err);
+        const msg = (err as Error).message;
+        toast.error(`Cloud-Sync fehlgeschlagen: ${msg}`);
+        updatePending(p.id, {
+          saving: false,
+          saved: true,
+          cloudError: msg,
+        });
+        onSaved?.();
+        return;
+      }
+    }
     updatePending(p.id, { saving: false, saved: true });
     onSaved?.();
   };
@@ -160,7 +203,7 @@ export default function PhotoUpload({ onSaved }: { onSaved?: () => void }) {
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
-        className="paper-card-soft p-10 text-center cursor-pointer block transition-colors"
+        className="paper-card-soft p-6 md:p-10 text-center cursor-pointer block transition-colors"
         style={{
           borderColor: dragOver ? "var(--pin)" : undefined,
           boxShadow: dragOver ? "6px 6px 0 var(--pin)" : undefined,
@@ -229,9 +272,38 @@ export default function PhotoUpload({ onSaved }: { onSaved?: () => void }) {
                   ) : (
                     <div className="flex items-center gap-1 font-mono uppercase tracking-wider" style={{ color: "var(--pin)" }}>
                       <MapPin className="w-3 h-3" />
-                      Ort fehlt
+                      {p.exifMissing ? "Kein GPS im Foto" : "Ort fehlt"}
                     </div>
                   )}
+                  <input
+                    type="text"
+                    value={p.caption}
+                    onChange={(e) => updatePending(p.id, { caption: e.target.value })}
+                    placeholder="Bildunterschrift (optional)"
+                    className="w-full text-xs px-2 py-1 border-2 border-ink bg-paper-deep rounded focus:outline-none focus:border-pin"
+                    maxLength={140}
+                  />
+                  <textarea
+                    value={p.hints.join("\n")}
+                    onChange={(e) =>
+                      updatePending(p.id, {
+                        hints: e.target.value.split(/\r?\n/),
+                      })
+                    }
+                    placeholder={"Hinweise (eine pro Zeile)\nz. B. Mittelalterliche Altstadt"}
+                    rows={2}
+                    className="w-full text-xs px-2 py-1 border-2 border-ink bg-paper-deep rounded focus:outline-none focus:border-pin font-mono resize-none"
+                  />
+                  <textarea
+                    value={p.story}
+                    onChange={(e) =>
+                      updatePending(p.id, { story: e.target.value.slice(0, 2000) })
+                    }
+                    placeholder={"Story (optional, wird nach dem Tipp gezeigt)"}
+                    rows={2}
+                    maxLength={2000}
+                    className="w-full text-xs px-2 py-1 border-2 border-ink bg-paper-deep rounded focus:outline-none focus:border-pin resize-none"
+                  />
                   <div className="flex gap-1">
                     {([1, 2, 3, 4, 5] as Difficulty[]).map((d) => (
                       <button

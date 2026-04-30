@@ -14,8 +14,10 @@ import {
   Film,
   Loader2,
   Download,
+  Flag,
 } from "lucide-react";
 import { getLane, getPhoto, listPhotos } from "@/lib/store";
+import { loadAlbumPlayPhotos, getAlbum } from "@/lib/albums";
 import { calcScore, formatDistance, haversineKm } from "@/lib/geo";
 import {
   DIFFICULTY_COLORS,
@@ -27,7 +29,9 @@ import {
 import { recordGuess, recordSession } from "@/lib/stats";
 import { exportLaneRecap } from "@/lib/recap";
 import { isCloudEnabled } from "@/lib/supabase";
-import { submitDailyScore } from "@/lib/leaderboard";
+import { submitDailyScore, submitValidatedDailyScore } from "@/lib/leaderboard";
+import { reportPhoto, type ReportReason } from "@/lib/moderation";
+import { toast } from "@/lib/toast";
 import { sfx, haptic } from "@/lib/feedback";
 import { evaluateSession, getAchievementById } from "@/lib/achievements";
 
@@ -41,9 +45,10 @@ type Phase = "loading" | "empty" | "playing" | "reveal" | "done";
 interface GameProps {
   mode?: GameMode;
   laneId?: string;
+  albumId?: string;
 }
 
-export default function Game({ mode = "classic", laneId }: GameProps) {
+export default function Game({ mode = "classic", laneId, albumId }: GameProps) {
   const [phase, setPhase] = useState<Phase>("loading");
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [laneTitle, setLaneTitle] = useState<string | null>(null);
@@ -60,7 +65,18 @@ export default function Game({ mode = "classic", laneId }: GameProps) {
   useEffect(() => {
     (async () => {
       let round: Photo[] = [];
-      if (mode === "lane" && laneId) {
+      if (mode === "album" && albumId) {
+        const [album, photos] = await Promise.all([
+          getAlbum(albumId),
+          loadAlbumPlayPhotos(albumId),
+        ]);
+        if (!album || photos.length === 0) {
+          setPhase("empty");
+          return;
+        }
+        setLaneTitle(album.title);
+        round = [...photos].sort(() => Math.random() - 0.5);
+      } else if (mode === "lane" && laneId) {
         const lane = await getLane(laneId);
         if (!lane) {
           setPhase("empty");
@@ -102,7 +118,7 @@ export default function Game({ mode = "classic", laneId }: GameProps) {
       setStartedAt(performance.now());
       setTimeLeft(SPEEDRUN_SECONDS);
     })();
-  }, [mode, laneId]);
+  }, [mode, laneId, albumId]);
 
   const current = photos[index];
 
@@ -191,10 +207,30 @@ export default function Game({ mode = "classic", laneId }: GameProps) {
         totalScore,
         photoCount: photos.length,
       });
-      // Cloud submit for daily mode (best-effort, ignore failures)
+      // Cloud submit for daily mode (server-validated; falls back to local total)
       if (mode === "daily" && isCloudEnabled()) {
         const today = new Date().toISOString().slice(0, 10);
-        submitDailyScore(today, totalScore).catch(() => {});
+        const finalGuesses = [...guesses];
+        const validatePayload = finalGuesses.map((g) => ({
+          photoId: g.photoId,
+          guessLat: g.guessLat,
+          guessLng: g.guessLng,
+          hintsUsed: g.hintsUsed,
+          timeMs: Math.round(g.timeMs),
+        }));
+        submitValidatedDailyScore(today, validatePayload, totalScore)
+          .then(({ validated }) => {
+            if (validated) {
+              toast.success("Tagesscore serverseitig bestätigt.");
+            } else {
+              toast.info("Score lokal gespeichert (Server-Validierung übersprungen).");
+            }
+          })
+          .catch((e) => {
+            const msg = e instanceof Error ? e.message : String(e);
+            toast.error(`Score-Upload fehlgeschlagen: ${msg}`);
+            submitDailyScore(today, totalScore).catch(() => {});
+          });
       }
       // Achievement evaluation (local-only)
       const allGuesses = [...guesses];
@@ -278,28 +314,28 @@ export default function Game({ mode = "classic", laneId }: GameProps) {
   const nextPhoto = mode === "lane" ? photos[index + 1] : undefined;
 
   return (
-    <div className="h-screen flex flex-col bg-paper">
-      <div className="flex items-center justify-between px-6 py-3 bg-paper-warm border-b-2 border-ink">
+    <div className="h-[100dvh] flex flex-col bg-paper">
+      <div className="flex items-center justify-between px-3 md:px-6 py-2 md:py-3 bg-paper-warm border-b-2 border-ink gap-2">
         <Link
           href="/"
-          className="flex items-center gap-2 text-ink-soft hover:text-pin transition"
+          className="flex items-center gap-2 text-ink-soft hover:text-pin transition shrink-0"
         >
           <span className="logo-mark" style={{ width: 22, height: 22 }} />
-          <span className="font-display text-base font-bold">PinPoint</span>
+          <span className="hidden sm:inline font-display text-base font-bold">PinPoint</span>
         </Link>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 md:gap-4 min-w-0 flex-wrap justify-end">
           {laneTitle && (
-            <div className="hidden md:block text-xs font-mono uppercase tracking-wider text-ink-soft">
-              🛣️ {laneTitle}
+            <div className="hidden md:block text-xs font-mono uppercase tracking-wider text-ink-soft truncate max-w-[200px]">
+              📚 {laneTitle}
             </div>
           )}
-          <div className="font-mono text-xs uppercase tracking-wider text-ink-mute">
+          <div className="font-mono text-[11px] md:text-xs uppercase tracking-wider text-ink-mute shrink-0">
             <span className="font-display text-ink font-bold text-base">{index + 1}</span>{" "}/{" "}
             {photos.length}
           </div>
           {mode === "speedrun" && phase === "playing" && (
             <div
-              className="flex items-center gap-1 font-mono font-bold"
+              className="flex items-center gap-1 font-mono font-bold text-sm shrink-0"
               style={{ color: timeLeft < 5 ? "var(--pin)" : "var(--postal-blue)" }}
             >
               <Timer className="w-4 h-4" />
@@ -307,22 +343,22 @@ export default function Game({ mode = "classic", laneId }: GameProps) {
             </div>
           )}
           {mode === "no-move" && (
-            <div className="stamp-tag" style={{ transform: "rotate(-3deg)" }}>
+            <div className="hidden md:inline-block stamp-tag" style={{ transform: "rotate(-3deg)" }}>
               <Lock className="w-3 h-3 inline mr-1" />
               No-Move
             </div>
           )}
-          <div className="flex items-center gap-1" style={{ color: "var(--pin)" }}>
+          <div className="flex items-center gap-1 shrink-0" style={{ color: "var(--pin)" }}>
             <Trophy className="w-4 h-4" />
-            <span className="font-display font-bold tabular-nums text-lg">
+            <span className="font-display font-bold tabular-nums text-base md:text-lg">
               {totalScore.toLocaleString("de-DE")}
             </span>
           </div>
         </div>
       </div>
 
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_1fr] overflow-hidden">
-        <div className="relative bg-black flex items-center justify-center overflow-hidden">
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_1fr] overflow-hidden min-h-0">
+        <div className="relative bg-black flex items-center justify-center overflow-hidden min-h-[40vh] lg:min-h-0">
           {photoUrl && (
             <motion.img
               key={current.id}
@@ -343,16 +379,46 @@ export default function Game({ mode = "classic", laneId }: GameProps) {
             </div>
           )}
           {phase === "playing" && current && (
-            <div className="absolute bottom-4 left-4 flex gap-2">
-              <button
-                onClick={() => setHintsUsed((h) => Math.min(h + 1, 3))}
-                className="btn-ghost text-xs py-1.5 px-3 disabled:opacity-50"
-                style={{ background: "var(--paper)" }}
-                disabled={hintsUsed >= 3}
-              >
-                <Lightbulb className="w-3 h-3" style={{ color: "var(--mustard)" }} />
-                Hinweis ({hintsUsed}/3 — −15%)
-              </button>
+            <div className="absolute bottom-4 left-4 right-4 flex flex-col gap-2 items-start pointer-events-none">
+              <div className="flex flex-wrap gap-2 pointer-events-auto">
+                {(current.hints ?? []).slice(0, hintsUsed).map((h, i) => (
+                  <motion.div
+                    key={i}
+                    initial={{ y: 10, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    className="paper-card-soft px-3 py-1.5 text-xs flex items-center gap-2 border-2"
+                    style={{ borderColor: "var(--mustard)" }}
+                  >
+                    <Lightbulb className="w-3 h-3" style={{ color: "var(--mustard)" }} />
+                    <span className="font-mono">{h}</span>
+                  </motion.div>
+                ))}
+              </div>
+              {(() => {
+                const totalHints = current.hints?.length ?? 0;
+                const remaining = totalHints - hintsUsed;
+                const disabled = remaining <= 0;
+                return (
+                  <button
+                    onClick={() => {
+                      if (!disabled) setHintsUsed((h) => h + 1);
+                    }}
+                    className="btn-ghost text-xs py-1.5 px-3 disabled:opacity-40 pointer-events-auto"
+                    style={{ background: "var(--paper)" }}
+                    disabled={disabled}
+                    title={
+                      totalHints === 0
+                        ? "Für dieses Foto wurden keine Hinweise hinterlegt"
+                        : `Noch ${remaining} Hinweis${remaining === 1 ? "" : "e"} verfügbar (−15% pro Hinweis)`
+                    }
+                  >
+                    <Lightbulb className="w-3 h-3" style={{ color: "var(--mustard)" }} />
+                    {totalHints === 0
+                      ? "Keine Hinweise"
+                      : `Hinweis (${hintsUsed}/${totalHints} — −15%)`}
+                  </button>
+                );
+              })()}
             </div>
           )}
         </div>
@@ -412,21 +478,37 @@ export default function Game({ mode = "classic", laneId }: GameProps) {
                 initial={{ y: 80, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 exit={{ y: 80, opacity: 0 }}
-                className="absolute bottom-4 left-4 right-4 paper-card p-4 flex items-center justify-between gap-4"
+                className="absolute bottom-4 left-4 right-4 paper-card p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3"
               >
-                <div className="text-xs font-mono uppercase tracking-wider text-ink-soft flex items-center gap-2">
+                <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-ink-soft">
                   <MapPin className="w-3 h-3" />
                   {guess
                     ? `${guess.lat.toFixed(3)}, ${guess.lng.toFixed(3)}`
                     : "Setze einen Pin auf die Karte"}
                 </div>
-                <button
-                  onClick={submit}
-                  disabled={!guess}
-                  className="btn-primary"
-                >
-                  Tippen
-                </button>
+                <div className="flex items-center gap-2">
+                  {guess && (
+                    <button
+                      onClick={() => setGuess(null)}
+                      className="btn-ghost text-xs py-2 px-3"
+                      title="Pin entfernen"
+                    >
+                      Zurücksetzen
+                    </button>
+                  )}
+                  <button
+                    onClick={submit}
+                    disabled={!guess}
+                    className="btn-primary text-base px-6 py-2.5 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Tipp abgeben (Enter / Leertaste)"
+                  >
+                    <MapPin className="w-4 h-4" />
+                    Tipp abgeben
+                    <span className="hidden md:inline text-[10px] font-mono opacity-70 border border-current rounded px-1 ml-1">
+                      ⏎
+                    </span>
+                  </button>
+                </div>
               </motion.div>
             )}
             {phase === "reveal" && lastGuess && (
@@ -434,6 +516,9 @@ export default function Game({ mode = "classic", laneId }: GameProps) {
                 key="reveal"
                 guess={lastGuess}
                 truth={current ? { lat: current.lat, lng: current.lng } : null}
+                caption={current?.caption}
+                story={current?.story}
+                photoId={current?.id}
                 onNext={next}
                 isLast={index + 1 >= photos.length}
                 hasNextHint={!!nextPhoto}
@@ -449,18 +534,26 @@ export default function Game({ mode = "classic", laneId }: GameProps) {
 function RevealCard({
   guess,
   truth,
+  caption,
+  story,
+  photoId,
   onNext,
   isLast,
   hasNextHint,
 }: {
   guess: Guess;
   truth: { lat: number; lng: number } | null;
+  caption?: string;
+  story?: string;
+  photoId?: string;
   onNext: () => void;
   isLast: boolean;
   hasNextHint: boolean;
 }) {
   const [displayScore, setDisplayScore] = useState(0);
   const [placeLabel, setPlaceLabel] = useState<string | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportSent, setReportSent] = useState(false);
 
   useEffect(() => {
     if (!truth) return;
@@ -516,14 +609,106 @@ function RevealCard({
           🛣️ Nächstes Foto — blauer Pin
         </div>
       )}
+      {caption && (
+        <div className="text-sm text-ink-soft border-l-2 border-ink/30 pl-3 italic">
+          “{caption}”
+        </div>
+      )}
+      {story && (
+        <div className="text-sm text-ink border-l-2 pl-3 whitespace-pre-wrap" style={{ borderColor: "var(--mustard, #c89b1e)" }}>
+          {story}
+        </div>
+      )}
+      {photoId && isCloudEnabled() && (
+        <div className="flex items-center justify-end">
+          {reportSent ? (
+            <span className="text-[11px] font-mono uppercase tracking-wider text-ink-mute">
+              ✓ Gemeldet — danke
+            </span>
+          ) : reportOpen ? (
+            <ReportPicker
+              photoId={photoId}
+              onCancel={() => setReportOpen(false)}
+              onDone={() => {
+                setReportOpen(false);
+                setReportSent(true);
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setReportOpen(true)}
+              className="text-[11px] font-mono uppercase tracking-wider text-ink-mute hover:text-ink inline-flex items-center gap-1"
+              title="Foto melden"
+            >
+              <Flag className="w-3 h-3" /> melden
+            </button>
+          )}
+        </div>
+      )}
       <button
         onClick={onNext}
-        className="btn-primary flex items-center justify-center gap-2"
+        className="btn-primary flex items-center justify-center gap-2 text-base py-2.5"
+        autoFocus
       >
         {isLast ? "Ergebnis sehen" : "Nächste Runde"}
         <ArrowRight className="w-4 h-4" />
+        <span className="hidden md:inline text-[10px] font-mono opacity-70 border border-current rounded px-1 ml-1">
+          ⏎
+        </span>
       </button>
     </motion.div>
+  );
+}
+
+function ReportPicker({
+  photoId,
+  onDone,
+  onCancel,
+}: {
+  photoId: string;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const [busy, setBusy] = useState<ReportReason | null>(null);
+  const choices: { id: ReportReason; label: string }[] = [
+    { id: "nsfw", label: "NSFW" },
+    { id: "private-info", label: "Privat" },
+    { id: "wrong-place", label: "Falscher Ort" },
+    { id: "spam", label: "Spam" },
+    { id: "other", label: "Sonstiges" },
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {choices.map((c) => (
+        <button
+          key={c.id}
+          type="button"
+          disabled={busy !== null}
+          onClick={async () => {
+            setBusy(c.id);
+            try {
+              await reportPhoto(photoId, c.id);
+              toast.success("Meldung gesendet");
+              onDone();
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : "Meldung fehlgeschlagen");
+              setBusy(null);
+            }
+          }}
+          className="text-[11px] font-mono uppercase tracking-wider border border-ink/30 px-2 py-0.5 hover:bg-ink hover:text-paper disabled:opacity-50"
+        >
+          {busy === c.id ? "…" : c.label}
+        </button>
+      ))}
+      <button
+        type="button"
+        onClick={onCancel}
+        className="text-[11px] font-mono uppercase tracking-wider text-ink-mute px-1"
+      >
+        ×
+      </button>
+    </div>
   );
 }
 

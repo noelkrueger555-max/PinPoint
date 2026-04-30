@@ -4,6 +4,8 @@ import Link from "next/link";
 import { Trash2, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
 import { deletePhoto, listPhotos } from "@/lib/store";
+import { deletePhotoFromCloud } from "@/lib/cloud-sync";
+import { toast } from "@/lib/toast";
 import { DIFFICULTY_LABELS, type Photo } from "@/lib/types";
 import PageHeader from "@/components/PageHeader";
 import AuthGate from "@/components/AuthGate";
@@ -33,6 +35,14 @@ export default function LibraryPage() {
 
   const remove = async (id: string) => {
     await deletePhoto(id);
+    // Best-effort cloud delete — local always wins. Surface failures only.
+    deletePhotoFromCloud(id)
+      .then((r) => {
+        if (!r.removed && r.reason && r.reason !== "cloud-disabled" && r.reason !== "not-signed-in") {
+          toast.error(`Cloud-Löschen fehlgeschlagen: ${r.reason}`);
+        }
+      })
+      .catch(() => {});
     refresh();
   };
 

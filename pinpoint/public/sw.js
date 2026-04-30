@@ -3,16 +3,26 @@
 // (Mapbox API, OSM tiles, Supabase, Google APIs, etc.) are passed through
 // to the browser's default fetch handler — intercepting them would force
 // CORS opaque responses that break MapLibre WebGL textures, etc.
-const CACHE = "pinpoint-v5";
+//
+// Cache versioning: the registering page passes `?v=<buildId>` so each new
+// deploy gets a unique cache, and old caches are purged in `activate`.
+const SW_VERSION = (() => {
+  try {
+    const v = new URL(self.location.href).searchParams.get("v");
+    return v && v.length > 0 ? v : "dev";
+  } catch {
+    return "dev";
+  }
+})();
+const CACHE = `pinpoint-${SW_VERSION}`;
 const PRECACHE = ["/", "/play", "/library", "/lanes", "/upload", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches
-      .open(CACHE)
-      .then((c) => c.addAll(PRECACHE).catch(() => {}))
-      .then(() => self.skipWaiting())
+    caches.open(CACHE).then((c) => c.addAll(PRECACHE).catch(() => {}))
   );
+  // Do NOT call skipWaiting() here — we wait until the user accepts the
+  // "neue Version verfügbar" toast (which posts a SKIP_WAITING message).
 });
 
 self.addEventListener("activate", (event) => {
@@ -22,6 +32,14 @@ self.addEventListener("activate", (event) => {
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
+});
+
+// Allow the page to trigger an immediate activation when the user accepts
+// the "neue Version verfügbar" toast.
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener("fetch", (event) => {

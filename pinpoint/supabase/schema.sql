@@ -1,43 +1,85 @@
 -- ============================================================
--- PinPoint — full schema (Phase 1–4)
--- Run via: supabase db push  OR  paste into SQL editor.
+--  PinPoint — complete drop-in schema
+-- ============================================================
+--  How to install:
+--    1. Open Supabase Studio → SQL Editor → New query
+--    2. Paste this entire file
+--    3. Run.
+--
+--  This file is idempotent: running it on an empty project sets
+--  up everything; running it again on an existing project is a
+--  safe no-op (uses `if not exists`, `drop policy if exists`,
+--  `create or replace`). You can re-paste after every change.
+--
+--  What it provisions:
+--    • Extensions  (postgis, uuid-ossp)
+--    • Tables      (profiles, photos, lanes, lobbies, sessions,
+--                   guesses, daily_sets, daily_scores, seasons,
+--                   season_scores, duel_rooms, albums,
+--                   album_photos, album_members, friendships,
+--                   reports)
+--    • Indexes, check constraints, validation triggers
+--    • Functions   (handle_new_user, handle_new_album,
+--                   send_friend_request, cleanup_stale_rooms,
+--                   validate_photo_hints)
+--    • Triggers    (on_auth_user_created, albums_add_owner,
+--                   photos_validate_hints)
+--    • Views       (my_friends, daily_leaderboard)
+--    • RLS policies for every table
+--    • Storage buckets `photos` (private) and `thumbs` (public)
+--      with owner-scoped policies
 -- ============================================================
 
+
+-- ─────────────────────────────────────────────
+-- 0. Extensions
+-- ─────────────────────────────────────────────
 create extension if not exists "postgis";
 create extension if not exists "uuid-ossp";
 
--- -----------------------------
--- Profiles (1:1 with auth.users)
--- -----------------------------
+
+-- ─────────────────────────────────────────────
+-- 1. Profiles  (1:1 with auth.users)
+-- ─────────────────────────────────────────────
 create table if not exists public.profiles (
-  id uuid primary key references auth.users(id) on delete cascade,
-  display_name text not null default 'Spieler',
-  username text unique,                 -- handle for friend-search (lowercase)
-  avatar_url text,
-  bio text,
-  created_at timestamptz not null default now()
+  id            uuid primary key references auth.users(id) on delete cascade,
+  display_name  text not null default 'Spieler',
+  username      text unique,
+  avatar_url    text,
+  bio           text,
+  created_at    timestamptz not null default now()
 );
 
--- Backfill columns for installs that ran the v1 schema before.
-alter table public.profiles add column if not exists username text;
-alter table public.profiles add column if not exists bio text;
+-- Backfills for older installs.
+alter table public.profiles add column if not exists username   text;
+alter table public.profiles add column if not exists bio        text;
 alter table public.profiles add column if not exists avatar_url text;
 
 do $$ begin
-  if not exists (
-    select 1 from pg_constraint
-    where conname = 'profiles_username_key' and conrelid = 'public.profiles'::regclass
-  ) then
+  if not exists (select 1 from pg_constraint where conname = 'profiles_username_key' and conrelid = 'public.profiles'::regclass) then
     alter table public.profiles add constraint profiles_username_key unique (username);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'profiles_display_name_len') then
+    alter table public.profiles add constraint profiles_display_name_len
+      check (char_length(display_name) between 1 and 60);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'profiles_username_len') then
+    alter table public.profiles add constraint profiles_username_len
+      check (username is null or (char_length(username) between 3 and 30 and username ~ '^[a-z0-9_]+$'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'profiles_bio_len') then
+    alter table public.profiles add constraint profiles_bio_len
+      check (bio is null or char_length(bio) <= 280);
   end if;
 end $$;
 
-create index if not exists profiles_username_idx on public.profiles(username);
+create index if not exists profiles_username_idx     on public.profiles(username);
 create index if not exists profiles_display_name_idx on public.profiles(lower(display_name));
 
--- -----------------------------
--- Photos
--- -----------------------------
+
+-- ─────────────────────────────────────────────
+-- 2. Photos
+-- ─────────────────────────────────────────────
 do $$ begin
   if not exists (select 1 from pg_type where typname = 'photo_visibility') then
     create type photo_visibility as enum ('private', 'friends', 'public');
@@ -45,289 +87,481 @@ do $$ begin
 end $$;
 
 create table if not exists public.photos (
-  id uuid primary key default uuid_generate_v4(),
-  owner uuid not null references public.profiles(id) on delete cascade,
-  storage_path text not null,         -- bucket: photos/{owner}/{id}.jpg
-  thumb_path text not null,           -- bucket: thumbs/{owner}/{id}.jpg
-  lat double precision not null,
-  lng double precision not null,
-  geom geography(point,4326) generated always as (st_makepoint(lng, lat)::geography) stored,
-  taken_at timestamptz,
-  caption text,
-  difficulty smallint not null check (difficulty between 1 and 5),
-  auto_difficulty smallint check (auto_difficulty between 1 and 5),
-  visibility photo_visibility not null default 'private',
-  moderation_status text not null default 'ok' check (moderation_status in ('ok','flagged','removed')),
-  created_at timestamptz not null default now()
+  id                 uuid primary key default uuid_generate_v4(),
+  owner              uuid not null references public.profiles(id) on delete cascade,
+  storage_path       text not null,                            -- bucket: photos/{owner}/{id}.jpg
+  thumb_path         text not null,                            -- bucket: thumbs/{owner}/{id}.jpg
+  lat                double precision not null,
+  lng                double precision not null,
+  geom               geography(point,4326) generated always as (st_makepoint(lng, lat)::geography) stored,
+  taken_at           timestamptz,
+  caption            text,
+  difficulty         smallint not null check (difficulty between 1 and 5),
+  auto_difficulty    smallint check (auto_difficulty between 1 and 5),
+  visibility         photo_visibility not null default 'private',
+  moderation_status  text not null default 'ok' check (moderation_status in ('ok','flagged','removed')),
+  hints              text[] not null default '{}',
+  story              text,
+  created_at         timestamptz not null default now()
 );
 
-create index if not exists photos_owner_idx on public.photos(owner);
-create index if not exists photos_visibility_idx on public.photos(visibility);
-create index if not exists photos_geom_idx on public.photos using gist (geom);
+-- Backfills.
+alter table public.photos add column if not exists hints text[] not null default '{}';
+alter table public.photos add column if not exists story text;
 
--- -----------------------------
--- Lanes
--- -----------------------------
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'photos_caption_len') then
+    alter table public.photos add constraint photos_caption_len
+      check (caption is null or char_length(caption) <= 280);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'photos_story_len') then
+    alter table public.photos add constraint photos_story_len
+      check (story is null or char_length(story) <= 2000);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'photos_hints_count') then
+    alter table public.photos add constraint photos_hints_count
+      check (cardinality(hints) <= 5);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'photos_lat_range') then
+    alter table public.photos add constraint photos_lat_range check (lat between  -90 and  90);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'photos_lng_range') then
+    alter table public.photos add constraint photos_lng_range check (lng between -180 and 180);
+  end if;
+end $$;
+
+create index if not exists photos_owner_idx      on public.photos(owner);
+create index if not exists photos_visibility_idx on public.photos(visibility);
+create index if not exists photos_geom_idx       on public.photos using gist (geom);
+
+-- Per-element hint length guard.
+create or replace function public.validate_photo_hints()
+returns trigger language plpgsql as $$
+declare h text;
+begin
+  if new.hints is null then return new; end if;
+  foreach h in array new.hints loop
+    if char_length(h) > 200 then
+      raise exception 'hint too long (max 200 chars)';
+    end if;
+  end loop;
+  return new;
+end; $$;
+
+drop trigger if exists photos_validate_hints on public.photos;
+create trigger photos_validate_hints
+  before insert or update on public.photos
+  for each row execute function public.validate_photo_hints();
+
+
+-- ─────────────────────────────────────────────
+-- 3. Lanes  (legacy — kept for compatibility)
+-- ─────────────────────────────────────────────
 create table if not exists public.lanes (
-  id uuid primary key default uuid_generate_v4(),
-  owner uuid not null references public.profiles(id) on delete cascade,
-  title text not null,
+  id          uuid primary key default uuid_generate_v4(),
+  owner       uuid not null references public.profiles(id) on delete cascade,
+  title       text not null,
   description text,
   cover_photo uuid references public.photos(id) on delete set null,
-  visibility photo_visibility not null default 'private',
-  created_at timestamptz not null default now()
+  visibility  photo_visibility not null default 'private',
+  created_at  timestamptz not null default now()
 );
 
 create table if not exists public.lane_photos (
-  lane_id uuid not null references public.lanes(id) on delete cascade,
-  photo_id uuid not null references public.photos(id) on delete cascade,
-  position int not null,
+  lane_id  uuid not null references public.lanes(id)   on delete cascade,
+  photo_id uuid not null references public.photos(id)  on delete cascade,
+  position int  not null,
   primary key (lane_id, photo_id)
 );
 create index if not exists lane_photos_lane_pos on public.lane_photos(lane_id, position);
 
--- -----------------------------
--- Lobbies (shareable with code)
--- -----------------------------
+
+-- ─────────────────────────────────────────────
+-- 4. Albums  (current playable collection)
+-- ─────────────────────────────────────────────
+create table if not exists public.albums (
+  id           uuid primary key default uuid_generate_v4(),
+  owner        uuid not null references public.profiles(id) on delete cascade,
+  title        text not null,
+  description  text,
+  cover_photo  uuid references public.photos(id) on delete set null,
+  invite_code  text unique not null,
+  created_at   timestamptz not null default now()
+);
+create index if not exists albums_owner_idx       on public.albums(owner);
+create index if not exists albums_invite_code_idx on public.albums(invite_code);
+
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'albums_title_len') then
+    alter table public.albums add constraint albums_title_len
+      check (char_length(title) between 1 and 80);
+  end if;
+end $$;
+
+create table if not exists public.album_photos (
+  album_id uuid not null references public.albums(id)   on delete cascade,
+  photo_id uuid not null references public.photos(id)   on delete cascade,
+  added_by uuid not null references public.profiles(id) on delete cascade,
+  added_at timestamptz not null default now(),
+  position int not null default 0,
+  primary key (album_id, photo_id)
+);
+create index if not exists album_photos_album_idx on public.album_photos(album_id, position);
+
+create table if not exists public.album_members (
+  album_id  uuid not null references public.albums(id)   on delete cascade,
+  member    uuid not null references public.profiles(id) on delete cascade,
+  role      text not null default 'player' check (role in ('owner','editor','player')),
+  joined_at timestamptz not null default now(),
+  primary key (album_id, member)
+);
+create index if not exists album_members_member_idx on public.album_members(member);
+
+-- Auto-add the owner as a member with role 'owner'.
+create or replace function public.handle_new_album()
+returns trigger language plpgsql security definer as $$
+begin
+  insert into public.album_members (album_id, member, role)
+  values (new.id, new.owner, 'owner')
+  on conflict (album_id, member) do update set role = 'owner';
+  return new;
+end; $$;
+
+drop trigger if exists albums_add_owner on public.albums;
+create trigger albums_add_owner
+  after insert on public.albums
+  for each row execute procedure public.handle_new_album();
+
+
+-- ─────────────────────────────────────────────
+-- 5. Lobbies, sessions, guesses
+-- ─────────────────────────────────────────────
 create table if not exists public.lobbies (
-  id uuid primary key default uuid_generate_v4(),
-  owner uuid not null references public.profiles(id) on delete cascade,
-  code text unique not null,                   -- 6 char short code
-  title text not null default 'Lobby',
-  photo_ids uuid[] not null default '{}',
-  lane_ids uuid[] not null default '{}',
+  id         uuid primary key default uuid_generate_v4(),
+  owner      uuid not null references public.profiles(id) on delete cascade,
+  code       text unique not null,
+  title      text not null default 'Lobby',
+  photo_ids  uuid[] not null default '{}',
+  lane_ids   uuid[] not null default '{}',
   created_at timestamptz not null default now(),
   expires_at timestamptz
 );
 create index if not exists lobbies_code_idx on public.lobbies(code);
 
--- -----------------------------
--- Sessions + Guesses (validated)
--- -----------------------------
 create table if not exists public.sessions (
-  id uuid primary key default uuid_generate_v4(),
-  player uuid not null references public.profiles(id) on delete cascade,
-  mode text not null,
-  lobby_id uuid references public.lobbies(id) on delete set null,
-  total_score int not null default 0,
-  photo_count int not null default 0,
-  started_at timestamptz not null default now(),
-  finished_at timestamptz
+  id           uuid primary key default uuid_generate_v4(),
+  player       uuid not null references public.profiles(id) on delete cascade,
+  mode         text not null,
+  lobby_id     uuid references public.lobbies(id) on delete set null,
+  total_score  int  not null default 0,
+  photo_count  int  not null default 0,
+  started_at   timestamptz not null default now(),
+  finished_at  timestamptz
 );
 create index if not exists sessions_player_idx on public.sessions(player, started_at desc);
 
 create table if not exists public.guesses (
-  id uuid primary key default uuid_generate_v4(),
-  session_id uuid not null references public.sessions(id) on delete cascade,
-  photo_id uuid not null references public.photos(id) on delete cascade,
-  guess_lat double precision not null,
-  guess_lng double precision not null,
-  distance_km double precision not null,
-  score int not null,
-  hints_used smallint not null default 0,
-  time_ms int not null default 0,
-  validated boolean not null default false,    -- set true by edge function
-  created_at timestamptz not null default now()
+  id           uuid primary key default uuid_generate_v4(),
+  session_id   uuid not null references public.sessions(id) on delete cascade,
+  photo_id     uuid not null references public.photos(id)   on delete cascade,
+  guess_lat    double precision not null,
+  guess_lng    double precision not null,
+  distance_km  double precision not null,
+  score        int not null,
+  hints_used   smallint not null default 0,
+  time_ms      int not null default 0,
+  validated    boolean not null default false,
+  created_at   timestamptz not null default now()
 );
 
--- -----------------------------
--- Daily challenge (deterministic, server-picked)
--- -----------------------------
+
+-- ─────────────────────────────────────────────
+-- 6. Daily challenge & seasons
+-- ─────────────────────────────────────────────
 create table if not exists public.daily_sets (
-  date date primary key,
-  photo_ids uuid[] not null,
+  date       date primary key,
+  photo_ids  uuid[] not null,
   created_at timestamptz not null default now()
 );
 
 create table if not exists public.daily_scores (
-  date date not null references public.daily_sets(date) on delete cascade,
-  player uuid not null references public.profiles(id) on delete cascade,
-  score int not null,
+  date       date not null references public.daily_sets(date) on delete cascade,
+  player     uuid not null references public.profiles(id)     on delete cascade,
+  score      int  not null,
   created_at timestamptz not null default now(),
   primary key (date, player)
 );
 create index if not exists daily_scores_rank on public.daily_scores(date, score desc);
 
--- -----------------------------
--- Seasons + ranked
--- -----------------------------
 create table if not exists public.seasons (
-  id serial primary key,
-  name text not null,
-  starts_at timestamptz not null,
-  ends_at timestamptz not null
+  id         serial primary key,
+  name       text not null,
+  starts_at  timestamptz not null,
+  ends_at    timestamptz not null
 );
 
 create table if not exists public.season_scores (
-  season_id int not null references public.seasons(id) on delete cascade,
-  player uuid not null references public.profiles(id) on delete cascade,
-  rating int not null default 1000,
-  wins int not null default 0,
-  losses int not null default 0,
+  season_id int  not null references public.seasons(id)     on delete cascade,
+  player    uuid not null references public.profiles(id)    on delete cascade,
+  rating    int  not null default 1000,
+  wins      int  not null default 0,
+  losses    int  not null default 0,
   primary key (season_id, player)
 );
 
--- -----------------------------
--- Duel rooms (ephemeral, realtime)
--- -----------------------------
+
+-- ─────────────────────────────────────────────
+-- 7. Duel rooms
+-- ─────────────────────────────────────────────
 create table if not exists public.duel_rooms (
-  id uuid primary key default uuid_generate_v4(),
-  code text unique not null,
-  host uuid not null references public.profiles(id) on delete cascade,
-  challenger uuid references public.profiles(id) on delete set null,
-  photo_ids uuid[] not null,
-  state text not null default 'waiting' check (state in ('waiting','playing','finished')),
-  host_score int not null default 0,
-  challenger_score int not null default 0,
-  current_round smallint not null default 0,
-  created_at timestamptz not null default now()
+  id                uuid primary key default uuid_generate_v4(),
+  code              text unique not null,
+  host              uuid not null references public.profiles(id) on delete cascade,
+  challenger        uuid references public.profiles(id) on delete set null,
+  photo_ids         uuid[] not null,
+  state             text not null default 'waiting' check (state in ('waiting','playing','finished')),
+  host_score        int not null default 0,
+  challenger_score  int not null default 0,
+  current_round     smallint not null default 0,
+  created_at        timestamptz not null default now()
 );
 create index if not exists duel_rooms_code_idx on public.duel_rooms(code);
 
--- -----------------------------
--- Reports / moderation queue
--- -----------------------------
-create table if not exists public.reports (
-  id uuid primary key default uuid_generate_v4(),
-  reporter uuid not null references public.profiles(id) on delete cascade,
-  photo_id uuid not null references public.photos(id) on delete cascade,
-  reason text not null,
-  created_at timestamptz not null default now(),
-  handled boolean not null default false
-);
 
--- ============================================================
--- Row Level Security
--- ============================================================
-
-alter table public.profiles enable row level security;
-alter table public.photos enable row level security;
-alter table public.lanes enable row level security;
-alter table public.lane_photos enable row level security;
-alter table public.lobbies enable row level security;
-alter table public.sessions enable row level security;
-alter table public.guesses enable row level security;
-alter table public.daily_scores enable row level security;
-alter table public.season_scores enable row level security;
-alter table public.duel_rooms enable row level security;
-alter table public.reports enable row level security;
-
--- Profiles: self-read+write, public-read of display_name only via view
-drop policy if exists "profiles self read" on public.profiles;
-drop policy if exists "profiles public read" on public.profiles;
-drop policy if exists "profiles self write" on public.profiles;
-drop policy if exists "profiles self update" on public.profiles;
-create policy "profiles self read" on public.profiles for select using (auth.uid() = id);
-create policy "profiles public read" on public.profiles for select using (true);
-create policy "profiles self write" on public.profiles for insert with check (auth.uid() = id);
-create policy "profiles self update" on public.profiles for update using (auth.uid() = id);
-
--- Photos: owners see their own; everyone sees public+ok.
-drop policy if exists "photos owner all" on public.photos;
-drop policy if exists "photos public read" on public.photos;
-create policy "photos owner all" on public.photos for all using (auth.uid() = owner);
-create policy "photos public read"
-  on public.photos for select
-  using (visibility = 'public' and moderation_status = 'ok');
-
--- Lanes: same model
-drop policy if exists "lanes owner all" on public.lanes;
-drop policy if exists "lanes public read" on public.lanes;
-create policy "lanes owner all" on public.lanes for all using (auth.uid() = owner);
-create policy "lanes public read" on public.lanes for select using (visibility = 'public');
-
--- Lane-photo membership follows the lane
-drop policy if exists "lane_photos owner" on public.lane_photos;
-drop policy if exists "lane_photos public" on public.lane_photos;
-create policy "lane_photos owner" on public.lane_photos for all
-  using (exists (select 1 from public.lanes l where l.id = lane_id and l.owner = auth.uid()));
-create policy "lane_photos public" on public.lane_photos for select
-  using (exists (select 1 from public.lanes l where l.id = lane_id and l.visibility = 'public'));
-
--- Lobbies: anyone can SELECT by code (so guests can join), only owner writes
-drop policy if exists "lobbies anyone read" on public.lobbies;
-drop policy if exists "lobbies owner write" on public.lobbies;
-create policy "lobbies anyone read" on public.lobbies for select using (true);
-create policy "lobbies owner write" on public.lobbies for all using (auth.uid() = owner);
-
--- Sessions / guesses: only the player
-drop policy if exists "sessions player" on public.sessions;
-drop policy if exists "guesses player" on public.guesses;
-create policy "sessions player" on public.sessions for all using (auth.uid() = player);
-create policy "guesses player" on public.guesses for all
-  using (exists (select 1 from public.sessions s where s.id = session_id and s.player = auth.uid()));
-
--- Daily scores: read-all, write-own
-drop policy if exists "daily public read" on public.daily_scores;
-drop policy if exists "daily self write" on public.daily_scores;
-create policy "daily public read" on public.daily_scores for select using (true);
-create policy "daily self write" on public.daily_scores for insert with check (auth.uid() = player);
-
--- Season scores
-drop policy if exists "season public read" on public.season_scores;
-create policy "season public read" on public.season_scores for select using (true);
-
--- Duel rooms: read by code, host/challenger write
-drop policy if exists "duel public read" on public.duel_rooms;
-drop policy if exists "duel host insert" on public.duel_rooms;
-drop policy if exists "duel participants update" on public.duel_rooms;
-create policy "duel public read" on public.duel_rooms for select using (true);
-create policy "duel host insert" on public.duel_rooms for insert with check (auth.uid() = host);
-create policy "duel participants update" on public.duel_rooms for update
-  using (auth.uid() in (host, challenger));
-
--- Reports: any auth user can insert, only service role reads
-drop policy if exists "reports insert" on public.reports;
-create policy "reports insert" on public.reports for insert with check (auth.uid() = reporter);
-
--- ============================================================
--- Friendships (Phase 5b)
--- ============================================================
--- Symmetric pair stored once with user_a < user_b. Status drives invite UX.
+-- ─────────────────────────────────────────────
+-- 8. Friendships
+-- ─────────────────────────────────────────────
 create table if not exists public.friendships (
-  user_a uuid not null references public.profiles(id) on delete cascade,
-  user_b uuid not null references public.profiles(id) on delete cascade,
+  user_a       uuid not null references public.profiles(id) on delete cascade,
+  user_b       uuid not null references public.profiles(id) on delete cascade,
   requested_by uuid not null references public.profiles(id) on delete cascade,
-  status text not null default 'pending' check (status in ('pending','accepted','blocked')),
-  created_at timestamptz not null default now(),
-  accepted_at timestamptz,
+  status       text not null default 'pending' check (status in ('pending','accepted','blocked')),
+  created_at   timestamptz not null default now(),
+  accepted_at  timestamptz,
   primary key (user_a, user_b),
   check (user_a < user_b)
 );
 create index if not exists friendships_a_idx on public.friendships(user_a);
 create index if not exists friendships_b_idx on public.friendships(user_b);
 
-alter table public.friendships enable row level security;
 
-drop policy if exists "friendships participants read" on public.friendships;
-drop policy if exists "friendships invite" on public.friendships;
+-- ─────────────────────────────────────────────
+-- 9. Reports / moderation queue
+-- ─────────────────────────────────────────────
+create table if not exists public.reports (
+  id         uuid primary key default uuid_generate_v4(),
+  reporter   uuid not null references public.profiles(id) on delete cascade,
+  photo_id   uuid not null references public.photos(id)   on delete cascade,
+  reason     text not null,
+  created_at timestamptz not null default now(),
+  handled    boolean not null default false
+);
+
+
+-- ============================================================
+-- Row Level Security  (enable + policies)
+-- ============================================================
+alter table public.profiles       enable row level security;
+alter table public.photos         enable row level security;
+alter table public.lanes          enable row level security;
+alter table public.lane_photos    enable row level security;
+alter table public.lobbies        enable row level security;
+alter table public.sessions       enable row level security;
+alter table public.guesses        enable row level security;
+alter table public.daily_scores   enable row level security;
+alter table public.season_scores  enable row level security;
+alter table public.duel_rooms     enable row level security;
+alter table public.albums         enable row level security;
+alter table public.album_photos   enable row level security;
+alter table public.album_members  enable row level security;
+alter table public.friendships    enable row level security;
+alter table public.reports        enable row level security;
+
+
+-- profiles ----------------------------------------------------
+drop policy if exists "profiles self read"   on public.profiles;
+drop policy if exists "profiles public read" on public.profiles;
+drop policy if exists "profiles self write"  on public.profiles;
+drop policy if exists "profiles self update" on public.profiles;
+create policy "profiles self read"   on public.profiles for select using (auth.uid() = id);
+create policy "profiles public read" on public.profiles for select using (true);
+create policy "profiles self write"  on public.profiles for insert with check (auth.uid() = id);
+create policy "profiles self update" on public.profiles for update using (auth.uid() = id);
+
+
+-- photos ------------------------------------------------------
+drop policy if exists "photos owner all"          on public.photos;
+drop policy if exists "photos public read"        on public.photos;
+drop policy if exists "photos album member read"  on public.photos;
+create policy "photos owner all"   on public.photos for all using (auth.uid() = owner);
+create policy "photos public read" on public.photos for select
+  using (visibility = 'public' and moderation_status = 'ok');
+create policy "photos album member read" on public.photos for select using (
+  exists (
+    select 1
+    from public.album_photos ap
+    join public.album_members am on am.album_id = ap.album_id
+    where ap.photo_id = photos.id
+      and am.member = auth.uid()
+  )
+);
+
+
+-- lanes -------------------------------------------------------
+drop policy if exists "lanes owner all"   on public.lanes;
+drop policy if exists "lanes public read" on public.lanes;
+drop policy if exists "lane_photos owner"  on public.lane_photos;
+drop policy if exists "lane_photos public" on public.lane_photos;
+create policy "lanes owner all"   on public.lanes for all using (auth.uid() = owner);
+create policy "lanes public read" on public.lanes for select using (visibility = 'public');
+create policy "lane_photos owner" on public.lane_photos for all
+  using (exists (select 1 from public.lanes l where l.id = lane_id and l.owner = auth.uid()));
+create policy "lane_photos public" on public.lane_photos for select
+  using (exists (select 1 from public.lanes l where l.id = lane_id and l.visibility = 'public'));
+
+
+-- albums ------------------------------------------------------
+drop policy if exists "albums member read"   on public.albums;
+drop policy if exists "albums owner write"   on public.albums;
+drop policy if exists "albums owner update"  on public.albums;
+drop policy if exists "albums owner delete"  on public.albums;
+create policy "albums member read" on public.albums for select using (
+  auth.uid() = owner
+  or exists (
+    select 1 from public.album_members m
+    where m.album_id = albums.id and m.member = auth.uid()
+  )
+);
+create policy "albums owner write"  on public.albums for insert with check (auth.uid() = owner);
+create policy "albums owner update" on public.albums for update using (auth.uid() = owner);
+create policy "albums owner delete" on public.albums for delete using (auth.uid() = owner);
+
+drop policy if exists "album_photos member read"    on public.album_photos;
+drop policy if exists "album_photos editor write"   on public.album_photos;
+drop policy if exists "album_photos editor delete"  on public.album_photos;
+create policy "album_photos member read" on public.album_photos for select using (
+  exists (
+    select 1 from public.album_members m
+    where m.album_id = album_photos.album_id and m.member = auth.uid()
+  )
+);
+create policy "album_photos editor write" on public.album_photos for insert with check (
+  exists (
+    select 1 from public.album_members m
+    where m.album_id = album_photos.album_id
+      and m.member = auth.uid()
+      and m.role in ('owner','editor')
+  )
+);
+create policy "album_photos editor delete" on public.album_photos for delete using (
+  exists (
+    select 1 from public.album_members m
+    where m.album_id = album_photos.album_id
+      and m.member = auth.uid()
+      and m.role in ('owner','editor')
+  )
+);
+
+drop policy if exists "album_members member read"    on public.album_members;
+drop policy if exists "album_members self join"      on public.album_members;
+drop policy if exists "album_members owner manage"   on public.album_members;
+drop policy if exists "album_members self leave"     on public.album_members;
+create policy "album_members member read" on public.album_members for select using (
+  member = auth.uid()
+  or exists (
+    select 1 from public.album_members m
+    where m.album_id = album_members.album_id and m.member = auth.uid()
+  )
+);
+create policy "album_members self join" on public.album_members for insert with check (
+  member = auth.uid() and role = 'player'
+);
+create policy "album_members owner manage" on public.album_members for update using (
+  exists (
+    select 1 from public.albums a
+    where a.id = album_members.album_id and a.owner = auth.uid()
+  )
+);
+create policy "album_members self leave" on public.album_members for delete using (
+  member = auth.uid()
+  or exists (
+    select 1 from public.albums a
+    where a.id = album_members.album_id and a.owner = auth.uid()
+  )
+);
+
+
+-- lobbies / sessions / guesses --------------------------------
+drop policy if exists "lobbies anyone read" on public.lobbies;
+drop policy if exists "lobbies owner write" on public.lobbies;
+drop policy if exists "sessions player"     on public.sessions;
+drop policy if exists "guesses player"      on public.guesses;
+create policy "lobbies anyone read" on public.lobbies for select using (true);
+create policy "lobbies owner write" on public.lobbies for all using (auth.uid() = owner);
+create policy "sessions player"     on public.sessions for all using (auth.uid() = player);
+create policy "guesses player"      on public.guesses  for all
+  using (exists (select 1 from public.sessions s where s.id = session_id and s.player = auth.uid()));
+
+
+-- daily / season ----------------------------------------------
+drop policy if exists "daily public read"   on public.daily_scores;
+drop policy if exists "daily self write"    on public.daily_scores;
+drop policy if exists "season public read"  on public.season_scores;
+create policy "daily public read"  on public.daily_scores  for select using (true);
+create policy "daily self write"   on public.daily_scores  for insert with check (auth.uid() = player);
+create policy "season public read" on public.season_scores for select using (true);
+
+
+-- duel rooms --------------------------------------------------
+drop policy if exists "duel public read"          on public.duel_rooms;
+drop policy if exists "duel host insert"          on public.duel_rooms;
+drop policy if exists "duel participants update"  on public.duel_rooms;
+create policy "duel public read"          on public.duel_rooms for select using (true);
+create policy "duel host insert"          on public.duel_rooms for insert with check (auth.uid() = host);
+create policy "duel participants update"  on public.duel_rooms for update using (auth.uid() in (host, challenger));
+
+
+-- friendships -------------------------------------------------
+drop policy if exists "friendships participants read"   on public.friendships;
+drop policy if exists "friendships invite"              on public.friendships;
 drop policy if exists "friendships participants update" on public.friendships;
 drop policy if exists "friendships participants delete" on public.friendships;
+create policy "friendships participants read"   on public.friendships for select using (auth.uid() in (user_a, user_b));
+create policy "friendships invite"              on public.friendships for insert
+  with check (auth.uid() in (user_a, user_b) and auth.uid() = requested_by);
+create policy "friendships participants update" on public.friendships for update using (auth.uid() in (user_a, user_b));
+create policy "friendships participants delete" on public.friendships for delete using (auth.uid() in (user_a, user_b));
 
--- Read: only the two participants.
-create policy "friendships participants read" on public.friendships for select
-  using (auth.uid() in (user_a, user_b));
 
--- Insert: caller must be one side AND must be requested_by.
-create policy "friendships invite" on public.friendships for insert
-  with check (
-    auth.uid() in (user_a, user_b)
-    and auth.uid() = requested_by
-  );
+-- reports -----------------------------------------------------
+drop policy if exists "reports insert" on public.reports;
+create policy "reports insert" on public.reports for insert with check (auth.uid() = reporter);
 
--- Update: either participant may accept / block / cancel.
-create policy "friendships participants update" on public.friendships for update
-  using (auth.uid() in (user_a, user_b));
 
--- Delete: either participant may remove the friendship.
-create policy "friendships participants delete" on public.friendships for delete
-  using (auth.uid() in (user_a, user_b));
+-- ============================================================
+-- Functions
+-- ============================================================
 
--- Helper: send a friend request without worrying about user-ordering.
+-- Auto-create profile row when an auth.users row is created.
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer as $$
+begin
+  insert into public.profiles (id, display_name)
+  values (new.id, coalesce(new.raw_user_meta_data->>'display_name', split_part(new.email, '@', 1)))
+  on conflict (id) do nothing;
+  return new;
+end; $$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();
+
+
+-- Helper RPC to send a friend request without ordering hassles.
 create or replace function public.send_friend_request(target uuid)
 returns void language plpgsql security definer as $$
-declare
-  ua uuid; ub uuid;
+declare ua uuid; ub uuid;
 begin
   if target = auth.uid() then
     raise exception 'cannot befriend yourself';
@@ -342,10 +576,30 @@ begin
   on conflict (user_a, user_b) do nothing;
 end; $$;
 
-revoke all on function public.send_friend_request(uuid) from public;
+revoke all   on function public.send_friend_request(uuid) from public;
 grant execute on function public.send_friend_request(uuid) to authenticated;
 
--- View: expanded friend rows from the perspective of the current user.
+
+-- Cron-friendly cleanup for stale lobbies / duels.
+create or replace function public.cleanup_stale_rooms()
+returns void language plpgsql security definer as $$
+begin
+  delete from public.lobbies
+   where expires_at is not null and expires_at < now();
+  delete from public.duel_rooms
+   where created_at < now() - interval '24 hours'
+     and state in ('waiting','playing');
+  delete from public.duel_rooms
+   where state = 'finished'
+     and created_at < now() - interval '7 days';
+end; $$;
+
+revoke all on function public.cleanup_stale_rooms() from public;
+
+
+-- ============================================================
+-- Views
+-- ============================================================
 create or replace view public.my_friends as
   select
     case when f.user_a = auth.uid() then f.user_b else f.user_a end as friend_id,
@@ -363,65 +617,52 @@ create or replace view public.my_friends as
 
 grant select on public.my_friends to authenticated;
 
--- ============================================================
--- Helpful views
--- ============================================================
 create or replace view public.daily_leaderboard as
   select d.date, p.id as player_id, p.display_name, p.avatar_url, ds.score,
          rank() over (partition by d.date order by ds.score desc) as rank
   from public.daily_sets d
   join public.daily_scores ds on ds.date = d.date
-  join public.profiles p on p.id = ds.player;
+  join public.profiles      p  on p.id   = ds.player;
+
 
 -- ============================================================
--- Trigger: auto-create profile row on signup
+-- Storage buckets + policies
 -- ============================================================
-create or replace function public.handle_new_user()
-returns trigger language plpgsql security definer as $$
-begin
-  insert into public.profiles (id, display_name)
-  values (new.id, coalesce(new.raw_user_meta_data->>'display_name', split_part(new.email, '@', 1)))
+-- Buckets: `photos` (private) holds full-res JPEGs; `thumbs`
+-- (public-read) holds thumbnails. Object paths are namespaced
+-- by user-id: `{auth.uid()}/{photo.id}.jpg`.
+
+insert into storage.buckets (id, name, public)
+  values ('photos', 'photos', false)
   on conflict (id) do nothing;
-  return new;
-end; $$;
 
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute procedure public.handle_new_user();
+insert into storage.buckets (id, name, public)
+  values ('thumbs', 'thumbs', true)
+  on conflict (id) do nothing;
+
+-- photos bucket -----------------------------------------------
+drop policy if exists "photos_owner_read"   on storage.objects;
+drop policy if exists "photos_owner_write"  on storage.objects;
+drop policy if exists "photos_owner_delete" on storage.objects;
+create policy "photos_owner_read" on storage.objects for select
+  using (bucket_id = 'photos' and auth.uid()::text = (storage.foldername(name))[1]);
+create policy "photos_owner_write" on storage.objects for insert
+  with check (bucket_id = 'photos' and auth.uid()::text = (storage.foldername(name))[1]);
+create policy "photos_owner_delete" on storage.objects for delete
+  using (bucket_id = 'photos' and auth.uid()::text = (storage.foldername(name))[1]);
+
+-- thumbs bucket -----------------------------------------------
+drop policy if exists "thumbs_public_read"  on storage.objects;
+drop policy if exists "thumbs_owner_write"  on storage.objects;
+drop policy if exists "thumbs_owner_delete" on storage.objects;
+create policy "thumbs_public_read" on storage.objects for select
+  using (bucket_id = 'thumbs');
+create policy "thumbs_owner_write" on storage.objects for insert
+  with check (bucket_id = 'thumbs' and auth.uid()::text = (storage.foldername(name))[1]);
+create policy "thumbs_owner_delete" on storage.objects for delete
+  using (bucket_id = 'thumbs' and auth.uid()::text = (storage.foldername(name))[1]);
+
 
 -- ============================================================
--- Storage buckets (run separately via Supabase Studio or CLI)
+--  ✓ done — every paste produces the same final state.
 -- ============================================================
--- supabase storage create bucket photos --public=false
--- supabase storage create bucket thumbs --public=true
---
--- After bucket creation, apply these RLS policies via SQL editor:
---
--- Photos bucket (private, requires signed URL or owner auth)
---
---   create policy "photos_owner_read"
---     on storage.objects for select
---     using (bucket_id = 'photos' and auth.uid()::text = (storage.foldername(name))[1]);
---
---   create policy "photos_owner_write"
---     on storage.objects for insert
---     with check (bucket_id = 'photos' and auth.uid()::text = (storage.foldername(name))[1]);
---
---   create policy "photos_owner_delete"
---     on storage.objects for delete
---     using (bucket_id = 'photos' and auth.uid()::text = (storage.foldername(name))[1]);
---
--- Thumbs bucket (public read, owner write)
---
---   create policy "thumbs_public_read"
---     on storage.objects for select
---     using (bucket_id = 'thumbs');
---
---   create policy "thumbs_owner_write"
---     on storage.objects for insert
---     with check (bucket_id = 'thumbs' and auth.uid()::text = (storage.foldername(name))[1]);
---
---   create policy "thumbs_owner_delete"
---     on storage.objects for delete
---     using (bucket_id = 'thumbs' and auth.uid()::text = (storage.foldername(name))[1]);

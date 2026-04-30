@@ -73,12 +73,13 @@ export async function joinDuelRoom(code: string): Promise<DuelRoom> {
 }
 
 /**
- * Subscribe to a duel channel. Returns the channel + a sender helper.
+ * Subscribe to a duel channel. Returns the channel, a sender helper, and a
+ * `dispose` cleanup that MUST be called on unmount to avoid Realtime leaks.
  */
 export function subscribeDuel(
   code: string,
   onEvent: (e: DuelEvent) => void
-): { channel: RealtimeChannel; send: (e: DuelEvent) => void } | null {
+): { channel: RealtimeChannel; send: (e: DuelEvent) => void; dispose: () => void } | null {
   const sb = getSupabase();
   if (!sb) return null;
 
@@ -93,7 +94,14 @@ export function subscribeDuel(
   const send = (e: DuelEvent) => {
     channel.send({ type: "broadcast", event: "duel", payload: e });
   };
-  return { channel, send };
+  const dispose = () => {
+    try {
+      sb.removeChannel(channel);
+    } catch {
+      // ignore — channel may already be torn down
+    }
+  };
+  return { channel, send, dispose };
 }
 
 export async function reportDuelScore(roomId: string, scoreField: "host_score" | "challenger_score", score: number) {

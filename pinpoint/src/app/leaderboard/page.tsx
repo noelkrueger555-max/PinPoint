@@ -51,7 +51,7 @@ export default function LeaderboardPage() {
         {cloud && !loading && entries.length === 0 && !error && (
           <div className="mt-10 paper-card-soft p-8 text-center text-ink-soft">
             Heute hat noch niemand gespielt.{" "}
-            <Link href="/play/daily" className="btn-link">Sei der Erste →</Link>
+            <Link href="/play" className="btn-link">Album wählen →</Link>
           </div>
         )}
 

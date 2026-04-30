@@ -51,19 +51,27 @@ export interface MapPickerProps {
   className?: string;
 }
 
-// Probe the Mapbox style URL once per session — if it 401/403s we skip it
-// entirely and start with the OSM fallback (avoids a blank canvas while
-// maplibre waits on a never-arriving style).
-let mapboxStyleOk: boolean | null = null;
+// Probe the Mapbox style URL — if it 401/403s we skip it entirely and start
+// with the OSM fallback. The result is cached for 5 minutes so a transient
+// network error or a token rotation doesn't lock the app into the fallback
+// for the entire tab lifetime.
+const MAPBOX_PROBE_TTL_MS = 5 * 60 * 1000;
+let mapboxStyleProbe: { ok: boolean; at: number } | null = null;
 async function probeMapboxStyle(url: string): Promise<boolean> {
-  if (mapboxStyleOk !== null) return mapboxStyleOk;
+  const now = Date.now();
+  if (mapboxStyleProbe && now - mapboxStyleProbe.at < MAPBOX_PROBE_TTL_MS) {
+    return mapboxStyleProbe.ok;
+  }
   try {
     const res = await fetch(url, { method: "GET", cache: "no-store" });
-    mapboxStyleOk = res.ok;
+    mapboxStyleProbe = { ok: res.ok, at: now };
   } catch {
-    mapboxStyleOk = false;
+    mapboxStyleProbe = { ok: false, at: now };
   }
-  return mapboxStyleOk;
+  return mapboxStyleProbe.ok;
+}
+function markMapboxStyleBroken() {
+  mapboxStyleProbe = { ok: false, at: Date.now() };
 }
 
 export default function MapPicker({
@@ -181,7 +189,7 @@ export default function MapPicker({
           lower.includes("source") && lower.includes("mapbox");
         if (fatal && !usingFallback && map) {
           usingFallback = true;
-          mapboxStyleOk = false;
+          markMapboxStyleBroken();
           try {
             map.setStyle(FALLBACK_STYLE);
             setTileError("Mapbox-Stil/Tiles nicht erreichbar — OSM-Fallback aktiv.");
@@ -204,7 +212,7 @@ export default function MapPicker({
           const loaded = map.areTilesLoaded?.();
           if (!loaded && !usingFallback) {
             usingFallback = true;
-            mapboxStyleOk = false;
+            markMapboxStyleBroken();
             try {
               map.setStyle(FALLBACK_STYLE);
               setTileError("Mapbox-Tiles nicht erreichbar — OSM-Fallback aktiv.");

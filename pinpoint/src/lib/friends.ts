@@ -128,8 +128,18 @@ export async function updateProfile(patch: {
   const me = (await sb.auth.getUser()).data.user?.id;
   if (!me) return false;
   const cleaned: Record<string, string> = {};
-  if (patch.display_name) cleaned.display_name = patch.display_name.trim().slice(0, 40);
-  if (patch.username) cleaned.username = patch.username.trim().toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 24);
+  if (patch.display_name !== undefined) {
+    const v = patch.display_name.trim().slice(0, 60);
+    if (v.length < 1) throw new Error("Anzeigename darf nicht leer sein.");
+    cleaned.display_name = v;
+  }
+  if (patch.username !== undefined) {
+    const v = patch.username.trim().toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 30);
+    if (v.length > 0 && v.length < 3) {
+      throw new Error("Username muss mindestens 3 Zeichen haben.");
+    }
+    cleaned.username = v;
+  }
   if (patch.bio !== undefined) cleaned.bio = patch.bio.trim().slice(0, 280);
   if (patch.avatar_url) cleaned.avatar_url = patch.avatar_url;
   const { error } = await sb.from("profiles").update(cleaned).eq("id", me);

@@ -5,9 +5,10 @@ import Link from "next/link";
 import { Swords, Users, Loader2, Copy } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import AuthGate from "@/components/AuthGate";
-import { isCloudEnabled, getCurrentUser } from "@/lib/supabase";
+import { isCloudEnabled, getCurrentUser, getSupabase } from "@/lib/supabase";
 import { createDuelRoom, joinDuelRoom, type DuelRoom } from "@/lib/duel";
 import { listPhotos } from "@/lib/store";
+import DuelMatch from "@/components/DuelMatch";
 
 export default function DuelPage() {
   const cloud = isCloudEnabled();
@@ -20,6 +21,28 @@ export default function DuelPage() {
   useEffect(() => {
     if (cloud) getCurrentUser().then((u) => setUser(u ?? null));
   }, [cloud]);
+
+  // Live-poll the room for state/score changes (host waits for challenger,
+  // both poll for opponent's score after submission).
+  useEffect(() => {
+    if (!room) return;
+    const sb = getSupabase();
+    if (!sb) return;
+    let cancelled = false;
+    const tick = async () => {
+      const { data } = await sb
+        .from("duel_rooms")
+        .select("*")
+        .eq("id", room.id)
+        .maybeSingle();
+      if (!cancelled && data) setRoom(data as DuelRoom);
+    };
+    const iv = setInterval(tick, 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [room?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const create = async () => {
     setBusy(true);
@@ -112,9 +135,15 @@ export default function DuelPage() {
           </div>
         )}
 
-        {room && (
+        {room && room.state === "playing" && user?.id && (
+          <div className="mt-8">
+            <DuelMatch room={room} meIsHost={room.host === user.id} userId={user.id} />
+          </div>
+        )}
+
+        {room && room.state !== "playing" && (
           <div className="mt-10 paper-card p-8 text-center" style={{ transform: "rotate(-0.3deg)" }}>
-            <span className="tag-pin">{room.state === "waiting" ? "Warte auf Gegner" : room.state === "playing" ? "Läuft" : "Beendet"}</span>
+            <span className="tag-pin">{room.state === "waiting" ? "Warte auf Gegner" : "Beendet"}</span>
             <div className="font-display-wonk font-black text-6xl tracking-[0.2em] my-4" style={{ color: "var(--pin)" }}>
               {room.code}
             </div>

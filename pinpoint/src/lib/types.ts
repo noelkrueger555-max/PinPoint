@@ -9,6 +9,11 @@ export interface Photo {
   takenAt?: number;    // unix ms
   caption?: string;
   story?: string;
+  /**
+   * Optional progressive hints, revealed one at a time when the player
+   * presses the hint button. Each revealed hint costs 15% of the score.
+   */
+  hints?: string[];
   difficulty: Difficulty;
   autoDifficulty?: Difficulty;
   source: "exif" | "manual";
@@ -66,7 +71,7 @@ export interface Lane {
   createdAt: number;
 }
 
-export type GameMode = "classic" | "speedrun" | "no-move" | "lane" | "daily";
+export type GameMode = "classic" | "speedrun" | "no-move" | "lane" | "daily" | "lobby" | "duel" | "album";
 
 export const GAME_MODE_LABELS: Record<GameMode, string> = {
   classic: "Klassisch",
@@ -74,6 +79,9 @@ export const GAME_MODE_LABELS: Record<GameMode, string> = {
   "no-move": "No-Move",
   lane: "Memory Lane",
   daily: "Daily Five",
+  lobby: "Lobby",
+  duel: "Duell",
+  album: "Album",
 };
 
 export const GAME_MODE_DESC: Record<GameMode, string> = {
@@ -82,4 +90,7 @@ export const GAME_MODE_DESC: Record<GameMode, string> = {
   "no-move": "Karte darf nicht gezoomt werden · ×1.5 Punkte",
   lane: "Eine Reise als chronologischer Geo-Trail",
   daily: "Jeden Tag dieselben 5 Fotos für alle",
+  lobby: "Geteilte Lobby · serverseitig validiert",
+  duel: "Realtime · 1 vs 1",
+  album: "Spiele ein Foto-Album",
 };

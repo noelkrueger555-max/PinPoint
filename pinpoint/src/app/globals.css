@@ -614,3 +614,161 @@ body::after {
   letter-spacing: 0.1em;
   border: 1px solid currentColor;
 }
+
+/* ----------- Accessibility: focus + reduced motion ----------- */
+
+:focus-visible {
+  outline: 3px solid var(--pin);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 3px solid var(--pin);
+  outline-offset: 2px;
+}
+
+/* Respect system reduced-motion preference. Disables decorative motion
+   while keeping functional state changes (opacity, color) intact. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Skip-to-content link for keyboard users */
+.skip-to-content {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--pin);
+  color: var(--paper);
+  padding: 8px 16px;
+  z-index: 1000;
+  text-decoration: none;
+  font-weight: 700;
+}
+.skip-to-content:focus {
+  top: 0;
+}
+
+/* ── Light pill button (paired with btn-pill-dark) ─── */
+.btn-pill-light {
+  background: var(--paper);
+  color: var(--ink);
+  padding: 9px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  border: 2px solid var(--ink);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: transform 0.15s, background 0.15s;
+}
+.btn-pill-light:hover {
+  transform: translateY(-1px) rotate(1deg);
+  background: var(--paper-warm);
+}
+
+/* ── Mobile bottom nav (shown only ≤ md) ──────────────── */
+.mobile-tabbar {
+  display: none;
+}
+@media (max-width: 767px) {
+  .mobile-tabbar {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 40;
+    background: var(--paper);
+    border-top: 2px solid var(--ink);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom)) 4px;
+    justify-content: space-around;
+    align-items: stretch;
+    box-shadow: 0 -4px 12px rgba(40, 25, 10, 0.08);
+  }
+  .mobile-tabbar a {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 6px 2px;
+    color: var(--ink-soft);
+    text-decoration: none;
+    font-size: 10px;
+    font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-radius: 8px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mobile-tabbar a[data-active="true"] {
+    color: var(--pin);
+  }
+  .mobile-tabbar a:active {
+    background: var(--paper-warm);
+  }
+  /* Reserve space for bottom tab bar so content isn't hidden behind it. */
+  body:has(.mobile-tabbar) {
+    padding-bottom: calc(64px + env(safe-area-inset-bottom));
+  }
+}
+
+/* ── Mobile-specific tweaks ───────────────────────────── */
+@media (max-width: 767px) {
+  /* Touch-friendly: ensure all interactive targets are ≥ 44px tall. */
+  button, a.btn-primary, a.btn-ghost, a.btn-pill-dark, a.btn-pill-light,
+  .btn-primary, .btn-ghost, .btn-pill-dark, .btn-pill-light {
+    min-height: 44px;
+  }
+  /* Inputs / selects don't accidentally trigger zoom on iOS. */
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+  /* Prevent text selection on tap for buttons. */
+  button, a {
+    -webkit-tap-highlight-color: rgba(0, 0, 0, 0.04);
+  }
+  /* Soften the heavy paper-card hover-shift on mobile (no hover, looks weird). */
+  .paper-card:hover {
+    transform: none;
+    box-shadow: 6px 6px 0 var(--ink);
+  }
+  /* Reduce drop-shadow on mobile to avoid horizontal scroll. */
+  .paper-card {
+    box-shadow: 4px 4px 0 var(--ink);
+  }
+  /* Modals fill the screen comfortably. */
+  .paper-modal-backdrop {
+    padding: 8px;
+    align-items: flex-end;
+  }
+  .paper-modal-backdrop > * {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    border-radius: 18px 18px 6px 6px;
+  }
+  /* Tighter horizontal padding for `max-w-[1280px] mx-auto px-6` containers. */
+  main.max-w-\[1280px\], main.max-w-\[1200px\] {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+}

@@ -7,6 +7,7 @@ import { exportLobby, importLobby, type ImportResult } from "@/lib/share";
 import { listLanes, listPhotos } from "@/lib/store";
 import { isCloudEnabled, getCurrentUser, signInWithMagicLink, signInWithGoogle, signOut } from "@/lib/supabase";
 import { syncAllToCloud } from "@/lib/cloud-sync";
+import { toast } from "@/lib/toast";
 import { createLobby } from "@/lib/lobby";
 import PageHeader from "@/components/PageHeader";
 import AuthGate from "@/components/AuthGate";
@@ -28,6 +29,7 @@ export default function SharePage() {
   const [user, setUser] = useState<{ email?: string | null } | null>(null);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [lobbyCode, setLobbyCode] = useState<string | null>(null);
+  const [lobbyExpiry, setLobbyExpiry] = useState<"24h" | "7d" | "never">("7d");
 
   useEffect(() => {
     listPhotos().then((p) => setPhotoCount(p.length));
@@ -278,9 +280,12 @@ export default function SharePage() {
                   try {
                     await syncAllToCloud((m) => setSyncStatus(m));
                     setSyncStatus("Fertig ✓");
+                    toast.success("Cloud-Sync abgeschlossen");
                   } catch (e) {
-                    setError(e instanceof Error ? e.message : "Sync fehlgeschlagen");
+                    const msg = e instanceof Error ? e.message : "Sync fehlgeschlagen";
+                    setError(msg);
                     setSyncStatus(null);
+                    toast.error(`Cloud-Sync: ${msg}`);
                   }
                 }}
                 className="btn-ghost w-full"
@@ -308,13 +313,32 @@ export default function SharePage() {
                   <div className="font-display-wonk font-black text-5xl tracking-[0.2em] my-3" style={{ color: "var(--pin)" }}>
                     {lobbyCode}
                   </div>
-                  <button
-                    onClick={() => navigator.clipboard.writeText(lobbyCode)}
-                    className="btn-ghost"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                    Kopieren
-                  </button>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button
+                      onClick={() => navigator.clipboard.writeText(lobbyCode)}
+                      className="btn-ghost"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      Code kopieren
+                    </button>
+                    <button
+                      onClick={() => {
+                        const url = `${window.location.origin}/play/lobby?code=${lobbyCode}`;
+                        navigator.clipboard.writeText(url);
+                        toast.success("Lobby-Link kopiert");
+                      }}
+                      className="btn-ghost"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      Link kopieren
+                    </button>
+                    <Link
+                      href={`/play/lobby?code=${lobbyCode}`}
+                      className="btn-primary"
+                    >
+                      Spielen →
+                    </Link>
+                  </div>
                 </div>
               ) : (
                 <button
@@ -322,10 +346,17 @@ export default function SharePage() {
                     try {
                       const ps = await listPhotos();
                       const ls = await listLanes();
+                      const expiresAt =
+                        lobbyExpiry === "never"
+                          ? null
+                          : lobbyExpiry === "24h"
+                            ? new Date(Date.now() + 24 * 60 * 60 * 1000)
+                            : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
                       const lobby = await createLobby({
                         title: title || "Lobby",
                         photoIds: ps.map((p) => p.id),
                         laneIds: ls.map((l) => l.id),
+                        expiresAt,
                       });
                       setLobbyCode(lobby.code);
                     } catch (e) {
@@ -338,6 +369,33 @@ export default function SharePage() {
                   Code erstellen
                 </button>
               )}
+              <div className="mt-4">
+                <div className="text-xs font-mono uppercase tracking-wider text-ink-mute mb-2">
+                  Lobby läuft ab nach
+                </div>
+                <div className="flex gap-2">
+                  {(
+                    [
+                      { id: "24h", label: "24 h" },
+                      { id: "7d", label: "7 Tage" },
+                      { id: "never", label: "Nie" },
+                    ] as const
+                  ).map((o) => (
+                    <button
+                      key={o.id}
+                      onClick={() => setLobbyExpiry(o.id)}
+                      disabled={!!lobbyCode}
+                      className={
+                        lobbyExpiry === o.id
+                          ? "btn-primary text-xs"
+                          : "btn-ghost text-xs"
+                      }
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <p className="mt-4 text-xs text-ink-mute font-mono uppercase tracking-wider">
                 ✦ Lade vorher Bibliothek hoch
               </p>

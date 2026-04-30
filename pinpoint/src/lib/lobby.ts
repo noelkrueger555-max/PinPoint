@@ -68,19 +68,30 @@ export async function fetchLobbyByCode(code: string): Promise<LobbyPayload | nul
     .eq("code", code.toUpperCase())
     .maybeSingle();
   if (error) throw error;
-  return (data as LobbyPayload | null) ?? null;
+  const lobby = (data as LobbyPayload | null) ?? null;
+  if (!lobby) return null;
+  if (lobby.expires_at && new Date(lobby.expires_at).getTime() < Date.now()) {
+    throw new Error("Lobby ist abgelaufen.");
+  }
+  return lobby;
 }
 
 /**
  * Fetch signed URLs for photo blobs in a lobby. Caller can stream them
  * straight into the existing Game component.
+ *
+ * SECURITY: this intentionally does NOT return `lat/lng`. Lobby play must
+ * route the final score through the `validate-score` Edge Function (see
+ * `submitValidatedSession` in lib/leaderboard.ts), which reads the truth
+ * from the photos table via service-role. Clients only see the truth on
+ * the reveal screen if/when the server returns it for the current round.
  */
 export async function fetchLobbyPhotos(lobby: LobbyPayload) {
   const sb = getSupabase();
   if (!sb) throw new Error("Cloud-Modus nicht konfiguriert.");
   const { data: photos, error } = await sb
     .from("photos")
-    .select("id, lat, lng, difficulty, auto_difficulty, caption, taken_at, storage_path, thumb_path")
+    .select("id, difficulty, auto_difficulty, caption, hints, taken_at, storage_path, thumb_path")
     .in("id", lobby.photo_ids);
   if (error) throw error;
   if (!photos || photos.length === 0) return [];

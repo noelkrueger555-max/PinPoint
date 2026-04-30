@@ -24,7 +24,7 @@ export default function Home() {
           </Link>
           <ul className="hidden md:flex gap-7 list-none text-sm font-medium tracking-wide">
             <li><Link href="/play" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Spielen</Link></li>
-            <li><Link href="/lanes" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Lanes</Link></li>
+            <li><Link href="/albums" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Alben</Link></li>
             <li><Link href="/leaderboard" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Ranking</Link></li>
             <li><Link href="/duel" className="text-ink-soft hover:text-pin no-underline border-b border-dashed border-transparent hover:border-pin pb-0.5 transition-colors">Duell</Link></li>
             {signedIn && (
@@ -61,7 +61,7 @@ export default function Home() {
                 Aus Erinnerungen wird ein Quiz, aus Reisen werden Geschichten.
               </p>
               <div className="reveal reveal-4 flex flex-wrap gap-5 items-center">
-                <Link href="/play/daily" className="btn-primary">
+                <Link href="/play" className="btn-primary">
                   Battle starten
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                     <path d="M3 8h10m0 0L9 4m4 4L9 12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />

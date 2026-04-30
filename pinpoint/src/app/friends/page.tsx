@@ -39,6 +39,8 @@ function FriendsInner() {
   const [profileSaved, setProfileSaved] = useState(false);
   const [editName, setEditName] = useState("");
   const [editUsername, setEditUsername] = useState("");
+  const [editBio, setEditBio] = useState("");
+  const [editAvatarUrl, setEditAvatarUrl] = useState("");
 
   const refresh = async () => {
     const [u, p, list] = await Promise.all([
@@ -50,6 +52,17 @@ function FriendsInner() {
     setMe(p);
     setEditName(p?.display_name ?? "");
     setEditUsername(p?.username ?? "");
+    setEditAvatarUrl(p?.avatar_url ?? "");
+    // bio is fetched lazily because ProfileLite doesn't include it
+    if (u?.id) {
+      const sb = (await import("@/lib/supabase")).getSupabase();
+      if (sb) {
+        const { data: row } = await sb.from("profiles").select("bio").eq("id", u.id).maybeSingle();
+        if (row && typeof (row as { bio?: string }).bio === "string") {
+          setEditBio((row as { bio: string }).bio);
+        }
+      }
+    }
     setFriends(list);
     setLoading(false);
   };
@@ -119,7 +132,12 @@ function FriendsInner() {
     setSavingProfile(true);
     setProfileSaved(false);
     try {
-      await updateProfile({ display_name: editName, username: editUsername });
+      await updateProfile({
+        display_name: editName,
+        username: editUsername,
+        bio: editBio,
+        avatar_url: editAvatarUrl.trim() || undefined,
+      });
       setProfileSaved(true);
       await refresh();
       setTimeout(() => setProfileSaved(false), 2500);
@@ -178,6 +196,30 @@ function FriendsInner() {
                   <span className="text-[11px] font-mono text-ink-mute mt-1 block">
                     Nur a–z, 0–9, _. Wird für Freunde-Suche genutzt.
                   </span>
+                </label>
+                <label className="block">
+                  <span className="text-xs uppercase tracking-wider font-mono text-ink-mute">Bio</span>
+                  <textarea
+                    value={editBio}
+                    onChange={(e) => setEditBio(e.target.value.slice(0, 280))}
+                    maxLength={280}
+                    rows={3}
+                    className="paper-input w-full mt-1 resize-none"
+                    placeholder="Kurze Beschreibung (max 280 Zeichen)"
+                  />
+                  <span className="text-[11px] font-mono text-ink-mute mt-1 block">
+                    {editBio.length} / 280
+                  </span>
+                </label>
+                <label className="block">
+                  <span className="text-xs uppercase tracking-wider font-mono text-ink-mute">Avatar-URL</span>
+                  <input
+                    type="url"
+                    value={editAvatarUrl}
+                    onChange={(e) => setEditAvatarUrl(e.target.value)}
+                    className="paper-input w-full mt-1 font-mono text-xs"
+                    placeholder="https://…"
+                  />
                 </label>
                 <button
                   onClick={saveProfile}
