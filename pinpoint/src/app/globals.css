@@ -771,8 +771,9 @@ select:focus-visible {
     /* Long modals must shrink to fit the viewport (above the tabbar). */
     max-height: calc(100dvh - 16px - 64px - env(safe-area-inset-bottom));
   }
-  /* Tighter horizontal padding for `max-w-[1280px] mx-auto px-6` containers. */
-  main.max-w-\[1280px\], main.max-w-\[1200px\] {
+  /* Tighter horizontal padding for `max-w-[…] mx-auto px-6` containers
+     across the app (play, duel, leaderboard, ...). */
+  main[class*="max-w-["] {
     padding-left: 16px !important;
     padding-right: 16px !important;
   }

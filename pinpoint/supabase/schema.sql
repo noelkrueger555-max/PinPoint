@@ -378,6 +378,49 @@ alter table public.friendships    enable row level security;
 alter table public.reports        enable row level security;
 
 
+-- ─────────────────────────────────────────────
+-- RLS helpers (declared before any policy uses them)
+-- ─────────────────────────────────────────────
+-- These SECURITY DEFINER helpers bypass RLS internally so policies
+-- on `album_members` can ask "is this user a member?" without
+-- recursing back into themselves (Postgres infinite-recursion error).
+create or replace function public.is_album_member(_album_id uuid, _user_id uuid)
+returns boolean language sql security definer stable
+set search_path = public as $$
+  select exists (
+    select 1 from public.album_members
+    where album_id = _album_id and member = _user_id
+  );
+$$;
+
+create or replace function public.is_album_editor(_album_id uuid, _user_id uuid)
+returns boolean language sql security definer stable
+set search_path = public as $$
+  select exists (
+    select 1 from public.album_members
+    where album_id = _album_id
+      and member   = _user_id
+      and role in ('owner','editor')
+  );
+$$;
+
+create or replace function public.is_album_owner(_album_id uuid, _user_id uuid)
+returns boolean language sql security definer stable
+set search_path = public as $$
+  select exists (
+    select 1 from public.albums
+    where id = _album_id and owner = _user_id
+  );
+$$;
+
+revoke all on function public.is_album_member(uuid, uuid) from public;
+revoke all on function public.is_album_editor(uuid, uuid) from public;
+revoke all on function public.is_album_owner(uuid, uuid)  from public;
+grant execute on function public.is_album_member(uuid, uuid) to authenticated;
+grant execute on function public.is_album_editor(uuid, uuid) to authenticated;
+grant execute on function public.is_album_owner(uuid, uuid)  to authenticated;
+
+
 -- profiles ----------------------------------------------------
 drop policy if exists "profiles self read"   on public.profiles;
 drop policy if exists "profiles public read" on public.profiles;
@@ -398,11 +441,9 @@ create policy "photos public read" on public.photos for select
   using (visibility = 'public' and moderation_status = 'ok');
 create policy "photos album member read" on public.photos for select using (
   exists (
-    select 1
-    from public.album_photos ap
-    join public.album_members am on am.album_id = ap.album_id
+    select 1 from public.album_photos ap
     where ap.photo_id = photos.id
-      and am.member = auth.uid()
+      and public.is_album_member(ap.album_id, auth.uid())
   )
 );
 
@@ -427,10 +468,7 @@ drop policy if exists "albums owner update"  on public.albums;
 drop policy if exists "albums owner delete"  on public.albums;
 create policy "albums member read" on public.albums for select using (
   auth.uid() = owner
-  or exists (
-    select 1 from public.album_members m
-    where m.album_id = albums.id and m.member = auth.uid()
-  )
+  or public.is_album_member(albums.id, auth.uid())
 );
 create policy "albums owner write"  on public.albums for insert with check (auth.uid() = owner);
 create policy "albums owner update" on public.albums for update using (auth.uid() = owner);
@@ -439,55 +477,38 @@ create policy "albums owner delete" on public.albums for delete using (auth.uid(
 drop policy if exists "album_photos member read"    on public.album_photos;
 drop policy if exists "album_photos editor write"   on public.album_photos;
 drop policy if exists "album_photos editor delete"  on public.album_photos;
-create policy "album_photos member read" on public.album_photos for select using (
-  exists (
-    select 1 from public.album_members m
-    where m.album_id = album_photos.album_id and m.member = auth.uid()
-  )
-);
-create policy "album_photos editor write" on public.album_photos for insert with check (
-  exists (
-    select 1 from public.album_members m
-    where m.album_id = album_photos.album_id
-      and m.member = auth.uid()
-      and m.role in ('owner','editor')
-  )
-);
-create policy "album_photos editor delete" on public.album_photos for delete using (
-  exists (
-    select 1 from public.album_members m
-    where m.album_id = album_photos.album_id
-      and m.member = auth.uid()
-      and m.role in ('owner','editor')
-  )
-);
+create policy "album_photos member read"   on public.album_photos for select
+  using (public.is_album_member(album_id, auth.uid()));
+create policy "album_photos editor write"  on public.album_photos for insert
+  with check (public.is_album_editor(album_id, auth.uid()));
+create policy "album_photos editor delete" on public.album_photos for delete
+  using (public.is_album_editor(album_id, auth.uid()));
 
 drop policy if exists "album_members member read"    on public.album_members;
 drop policy if exists "album_members self join"      on public.album_members;
+drop policy if exists "album_members owner invite"   on public.album_members;
 drop policy if exists "album_members owner manage"   on public.album_members;
 drop policy if exists "album_members self leave"     on public.album_members;
+-- A member sees: their own row + every row of any album they're in.
+-- The helper bypasses RLS so this no longer self-references.
 create policy "album_members member read" on public.album_members for select using (
   member = auth.uid()
-  or exists (
-    select 1 from public.album_members m
-    where m.album_id = album_members.album_id and m.member = auth.uid()
-  )
+  or public.is_album_member(album_id, auth.uid())
 );
 create policy "album_members self join" on public.album_members for insert with check (
   member = auth.uid() and role = 'player'
 );
+-- Owners may insert other members with any role (player/editor).
+create policy "album_members owner invite" on public.album_members for insert with check (
+  public.is_album_owner(album_id, auth.uid())
+  and role in ('player','editor')
+);
 create policy "album_members owner manage" on public.album_members for update using (
-  exists (
-    select 1 from public.albums a
-    where a.id = album_members.album_id and a.owner = auth.uid()
-  )
+  public.is_album_owner(album_id, auth.uid())
 );
 create policy "album_members self leave" on public.album_members for delete using (
   member = auth.uid()
-  or exists (
-    select 1 from public.albums a
-    where a.id = album_members.album_id and a.owner = auth.uid()
-  )
+  or public.is_album_owner(album_id, auth.uid())
 );
 
 
