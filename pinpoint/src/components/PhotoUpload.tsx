@@ -232,7 +232,7 @@ export default function PhotoUpload({ onSaved }: { onSaved?: () => void }) {
       </motion.label>
 
       {pending.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           <AnimatePresence>
             {pending.map((p) => (
               <motion.div
@@ -347,11 +347,11 @@ export default function PhotoUpload({ onSaved }: { onSaved?: () => void }) {
       )}
 
       {pending.length > 0 && (
-        <div className="flex justify-end">
+        <div className="flex justify-stretch md:justify-end">
           <button
             onClick={saveAll}
             disabled={!allReady}
-            className="btn-primary"
+            className="btn-primary w-full md:w-auto"
           >
             Alle speichern
           </button>

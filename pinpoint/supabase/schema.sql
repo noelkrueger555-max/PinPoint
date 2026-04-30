@@ -434,10 +434,18 @@ create policy "profiles self update" on public.profiles for update using (auth.u
 
 -- photos ------------------------------------------------------
 drop policy if exists "photos owner all"          on public.photos;
+drop policy if exists "photos owner select"       on public.photos;
+drop policy if exists "photos owner insert"       on public.photos;
+drop policy if exists "photos owner update"       on public.photos;
+drop policy if exists "photos owner delete"       on public.photos;
 drop policy if exists "photos public read"        on public.photos;
 drop policy if exists "photos album member read"  on public.photos;
-create policy "photos owner all"   on public.photos for all using (auth.uid() = owner);
-create policy "photos public read" on public.photos for select
+-- Explicit per-action policies (safer than `for all` for upsert flows).
+create policy "photos owner select" on public.photos for select using (auth.uid() = owner);
+create policy "photos owner insert" on public.photos for insert with check (auth.uid() = owner);
+create policy "photos owner update" on public.photos for update using (auth.uid() = owner) with check (auth.uid() = owner);
+create policy "photos owner delete" on public.photos for delete using (auth.uid() = owner);
+create policy "photos public read"  on public.photos for select
   using (visibility = 'public' and moderation_status = 'ok');
 create policy "photos album member read" on public.photos for select using (
   exists (
@@ -578,6 +586,15 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
 
+-- Backfill: ensure every existing auth.users row has a profile row.
+-- Without this, photo / album inserts FK-violate for users who
+-- signed up before the trigger existed.
+insert into public.profiles (id, display_name)
+  select u.id, coalesce(u.raw_user_meta_data->>'display_name', split_part(u.email, '@', 1), 'Spieler')
+  from auth.users u
+  left join public.profiles p on p.id = u.id
+  where p.id is null;
+
 
 -- Helper RPC to send a friend request without ordering hassles.
 create or replace function public.send_friend_request(target uuid)
@@ -664,10 +681,14 @@ insert into storage.buckets (id, name, public)
 -- photos bucket -----------------------------------------------
 drop policy if exists "photos_owner_read"   on storage.objects;
 drop policy if exists "photos_owner_write"  on storage.objects;
+drop policy if exists "photos_owner_update" on storage.objects;
 drop policy if exists "photos_owner_delete" on storage.objects;
 create policy "photos_owner_read" on storage.objects for select
   using (bucket_id = 'photos' and auth.uid()::text = (storage.foldername(name))[1]);
 create policy "photos_owner_write" on storage.objects for insert
+  with check (bucket_id = 'photos' and auth.uid()::text = (storage.foldername(name))[1]);
+create policy "photos_owner_update" on storage.objects for update
+  using      (bucket_id = 'photos' and auth.uid()::text = (storage.foldername(name))[1])
   with check (bucket_id = 'photos' and auth.uid()::text = (storage.foldername(name))[1]);
 create policy "photos_owner_delete" on storage.objects for delete
   using (bucket_id = 'photos' and auth.uid()::text = (storage.foldername(name))[1]);
@@ -675,10 +696,14 @@ create policy "photos_owner_delete" on storage.objects for delete
 -- thumbs bucket -----------------------------------------------
 drop policy if exists "thumbs_public_read"  on storage.objects;
 drop policy if exists "thumbs_owner_write"  on storage.objects;
+drop policy if exists "thumbs_owner_update" on storage.objects;
 drop policy if exists "thumbs_owner_delete" on storage.objects;
 create policy "thumbs_public_read" on storage.objects for select
   using (bucket_id = 'thumbs');
 create policy "thumbs_owner_write" on storage.objects for insert
+  with check (bucket_id = 'thumbs' and auth.uid()::text = (storage.foldername(name))[1]);
+create policy "thumbs_owner_update" on storage.objects for update
+  using      (bucket_id = 'thumbs' and auth.uid()::text = (storage.foldername(name))[1])
   with check (bucket_id = 'thumbs' and auth.uid()::text = (storage.foldername(name))[1]);
 create policy "thumbs_owner_delete" on storage.objects for delete
   using (bucket_id = 'thumbs' and auth.uid()::text = (storage.foldername(name))[1]);
