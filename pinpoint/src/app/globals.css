@@ -758,6 +758,9 @@ select:focus-visible {
   /* Modals fill the screen comfortably. */
   .paper-modal-backdrop {
     padding: 8px;
+    /* Reserve space at the bottom so the tabbar (z-40) never hides
+       primary actions like "Erstellen" / "Speichern". */
+    padding-bottom: calc(8px + 64px + env(safe-area-inset-bottom));
     align-items: flex-end;
   }
   .paper-modal-backdrop > * {
@@ -765,6 +768,8 @@ select:focus-visible {
     max-width: 100% !important;
     margin: 0 !important;
     border-radius: 18px 18px 6px 6px;
+    /* Long modals must shrink to fit the viewport (above the tabbar). */
+    max-height: calc(100dvh - 16px - 64px - env(safe-area-inset-bottom));
   }
   /* Tighter horizontal padding for `max-w-[1280px] mx-auto px-6` containers. */
   main.max-w-\[1280px\], main.max-w-\[1200px\] {

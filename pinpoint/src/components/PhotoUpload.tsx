@@ -372,7 +372,7 @@ export default function PhotoUpload({ onSaved }: { onSaved?: () => void }) {
               animate={{ scale: 1 }}
               exit={{ scale: 0.95 }}
               onClick={(e) => e.stopPropagation()}
-              className="paper-modal w-full max-w-3xl h-[600px] overflow-hidden flex flex-col"
+              className="paper-modal w-full max-w-3xl h-[80dvh] md:h-[600px] overflow-hidden flex flex-col"
             >
               <div className="p-4 flex items-center justify-between border-b-2 border-ink bg-paper-warm">
                 <div className="flex items-center gap-2">

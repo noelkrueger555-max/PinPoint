@@ -385,7 +385,7 @@ function AlbumDetail({ id }: { id: string }) {
             {members.map((m) => (
               <div
                 key={m.member}
-                className="flex items-center gap-3 px-5 py-3"
+                className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 flex-wrap"
               >
                 <Users className="w-4 h-4 text-ink-mute" />
                 <div className="flex-1 min-w-0">
@@ -563,7 +563,7 @@ function AddPhotosModal({
         animate={{ scale: 1 }}
         exit={{ scale: 0.95 }}
         onClick={(e) => e.stopPropagation()}
-        className="paper-card p-6 max-w-3xl w-full mx-4 max-h-[85vh] flex flex-col"
+        className="paper-card p-4 md:p-6 max-w-3xl w-full md:mx-4 max-h-[85dvh] md:max-h-[85vh] flex flex-col"
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-display font-bold text-2xl tracking-tight">
@@ -680,7 +680,7 @@ function InviteModal({
         animate={{ scale: 1 }}
         exit={{ scale: 0.95 }}
         onClick={(e) => e.stopPropagation()}
-        className="paper-card p-6 max-w-md w-full mx-4"
+        className="paper-card p-4 md:p-6 max-w-md w-full md:mx-4 overflow-y-auto"
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-display font-bold text-2xl tracking-tight">

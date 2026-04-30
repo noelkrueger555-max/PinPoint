@@ -197,7 +197,7 @@ export default function AlbumsPage() {
               initial={{ scale: 0.95 }}
               animate={{ scale: 1 }}
               exit={{ scale: 0.95 }}
-              className="paper-card p-7 max-w-md w-full mx-4 flex flex-col gap-4"
+              className="paper-card p-7 max-w-md w-full mx-4 flex flex-col gap-4 overflow-y-auto"
             >
               <div className="flex items-center justify-between">
                 <h2 className="font-display font-bold text-2xl tracking-tight">
@@ -230,7 +230,7 @@ export default function AlbumsPage() {
                   className="mt-1 w-full px-3 py-2 border-2 border-ink bg-paper-deep rounded focus:outline-none focus:border-pin text-sm text-ink normal-case font-sans tracking-normal resize-none"
                 />
               </label>
-              <button type="submit" className="btn-primary self-end">
+              <button type="submit" className="btn-primary w-full md:w-auto md:self-end">
                 Erstellen
               </button>
             </motion.form>
@@ -251,7 +251,7 @@ export default function AlbumsPage() {
               initial={{ scale: 0.95 }}
               animate={{ scale: 1 }}
               exit={{ scale: 0.95 }}
-              className="paper-card p-7 max-w-md w-full mx-4 flex flex-col gap-4"
+              className="paper-card p-7 max-w-md w-full mx-4 flex flex-col gap-4 overflow-y-auto"
             >
               <div className="flex items-center justify-between">
                 <h2 className="font-display font-bold text-2xl tracking-tight">
@@ -273,7 +273,7 @@ export default function AlbumsPage() {
                   className="mt-1 w-full px-3 py-2 border-2 border-ink bg-paper-deep rounded focus:outline-none focus:border-pin text-2xl text-center tracking-[0.4em] font-mono"
                 />
               </label>
-              <button type="submit" className="btn-primary self-end">
+              <button type="submit" className="btn-primary w-full md:w-auto md:self-end">
                 Beitreten
               </button>
             </motion.form>
