@@ -114,13 +114,19 @@ export default function MapPicker({
       });
       if (cancelled) return;
 
-      // Decide on initial style. If a Mapbox token exists but the style
-      // endpoint isn't reachable (URL allow-list, expired token, network
-      // block), skip straight to OSM so the user always sees a map.
+      // Decide on initial style.
+      // We deliberately default to the OSM fallback style: the public
+      // Mapbox style v12 JSON contains source URLs (mapbox://...) and
+      // properties that MapLibre v5's strict style validator rejects
+      // (e.g. "unknown property name"), leaving the canvas blank.
+      // To opt in to Mapbox tiles, set NEXT_PUBLIC_MAPBOX_STYLE to a
+      // MapLibre-compatible style URL (e.g. a self-hosted style.json
+      // that uses raster tile sources).
       const url = mapboxStyleUrl();
+      const allowMapbox = process.env.NEXT_PUBLIC_ENABLE_MAPBOX_STYLE === "1";
       let initialStyle: maplibregl.StyleSpecification | string = FALLBACK_STYLE;
       let usingFallback = true;
-      if (url) {
+      if (url && allowMapbox) {
         const ok = await probeMapboxStyle(url);
         if (cancelled) return;
         if (ok) {
@@ -168,7 +174,11 @@ export default function MapPicker({
           lower.includes("401") ||
           lower.includes("forbidden") ||
           lower.includes("unauthorized") ||
-          lower.includes("ajax");
+          lower.includes("ajax") ||
+          lower.includes("unknown property") ||
+          lower.includes("validation") ||
+          lower.includes("mapbox://") ||
+          lower.includes("source") && lower.includes("mapbox");
         if (fatal && !usingFallback && map) {
           usingFallback = true;
           mapboxStyleOk = false;
