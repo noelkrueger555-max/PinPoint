@@ -357,8 +357,8 @@ export default function Game({ mode = "classic", laneId, albumId }: GameProps) {
         </div>
       </div>
 
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_1fr] overflow-hidden min-h-0">
-        <div className="relative bg-black flex items-center justify-center overflow-hidden min-h-[40vh] lg:min-h-0">
+      <div className="flex-1 grid grid-cols-1 grid-rows-[45dvh_1fr] lg:grid-rows-1 lg:grid-cols-[1fr_1fr] overflow-hidden min-h-0">
+        <div className="relative bg-black flex items-center justify-center overflow-hidden min-h-0">
           {photoUrl && (
             <motion.img
               key={current.id}
@@ -423,7 +423,7 @@ export default function Game({ mode = "classic", laneId, albumId }: GameProps) {
           )}
         </div>
 
-        <div className="relative">
+        <div className="relative min-h-0 overflow-hidden">
           {phase === "playing" && (
             <MapPicker
               marker={guess}
