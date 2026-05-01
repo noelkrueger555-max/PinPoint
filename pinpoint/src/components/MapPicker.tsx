@@ -45,6 +45,8 @@ export interface MapPickerProps {
   line?: { from: { lat: number; lng: number }; to: { lat: number; lng: number } } | null;
   onPick?: (lat: number, lng: number) => void;
   fitBoundsTo?: Array<{ lat: number; lng: number }>;
+  /** Optional override for fitBounds padding (in px). */
+  fitBoundsPadding?: number | { top: number; bottom: number; left: number; right: number };
   interactive?: boolean;
   /** disables zoom (for No-Move mode) */
   noZoom?: boolean;
@@ -82,6 +84,7 @@ export default function MapPicker({
   line,
   onPick,
   fitBoundsTo,
+  fitBoundsPadding,
   interactive = true,
   noZoom = false,
   className,
@@ -375,11 +378,17 @@ export default function MapPicker({
     fitBoundsTo.forEach((p) => bounds.extend([p.lng, p.lat]));
     const apply = () => {
       try { map.resize(); } catch {}
-      try { map.fitBounds(bounds, { padding: 80, duration: 1200, maxZoom: 8 }); } catch {}
+      try {
+        map.fitBounds(bounds, {
+          padding: fitBoundsPadding ?? 80,
+          duration: 1200,
+          maxZoom: 8,
+        });
+      } catch {}
     };
     if (map.isStyleLoaded()) apply();
     else map.once("load", apply);
-  }, [fitBoundsTo, ready]);
+  }, [fitBoundsTo, fitBoundsPadding, ready]);
 
   return (
     <div

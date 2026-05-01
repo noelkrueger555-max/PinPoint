@@ -15,6 +15,8 @@ import {
   Loader2,
   Download,
   Flag,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import { getLane, getPhoto, listPhotos } from "@/lib/store";
 import { loadAlbumPlayPhotos, getAlbum } from "@/lib/albums";
@@ -384,7 +386,11 @@ export default function Game({ mode = "classic", laneId, albumId }: GameProps) {
         />
       </div>
 
-      <div className="flex-1 grid grid-cols-1 grid-rows-[45dvh_1fr] lg:grid-rows-1 lg:grid-cols-[1fr_1fr] overflow-hidden min-h-0">
+      <div
+        className={`flex-1 grid grid-cols-1 lg:grid-rows-1 lg:grid-cols-[1fr_1fr] overflow-hidden min-h-0 ${
+          phase === "reveal" ? "grid-rows-[20dvh_1fr]" : "grid-rows-[45dvh_1fr]"
+        }`}
+      >
         <div className="relative bg-black flex items-center justify-center overflow-hidden min-h-0">
           {photoUrl && (
             <motion.img
@@ -460,7 +466,8 @@ export default function Game({ mode = "classic", laneId, albumId }: GameProps) {
           )}
           {phase === "reveal" && current && lastGuess && (
             <MapPicker
-              interactive={false}
+              interactive={true}
+              fitBoundsPadding={{ top: 40, left: 40, right: 40, bottom: 180 }}
               marker={
                 lastGuess.guessLat !== 0 || lastGuess.guessLng !== 0
                   ? { lat: lastGuess.guessLat, lng: lastGuess.guessLng }
@@ -585,6 +592,8 @@ function RevealCard({
   const [placeLabel, setPlaceLabel] = useState<string | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportSent, setReportSent] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const hasDetails = Boolean(caption || story || (photoId && isCloudEnabled()));
 
   useEffect(() => {
     if (!truth) return;
@@ -616,26 +625,26 @@ function RevealCard({
       initial={{ y: 100, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       exit={{ y: 100, opacity: 0 }}
-      className="fixed left-0 right-0 bottom-0 lg:left-1/2 lg:right-4 z-40 paper-card mx-2 mb-2 lg:mb-4 lg:mx-4 p-4 md:p-5 flex flex-col gap-3 max-h-[60dvh] overflow-y-auto"
-      style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}
+      className="fixed left-0 right-0 bottom-0 lg:left-1/2 lg:right-4 z-40 paper-card mx-2 mb-2 lg:mb-4 lg:mx-4 p-3 md:p-4 flex flex-col gap-2 md:gap-3 max-h-[calc(100dvh-80px)] overflow-y-auto"
+      style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
     >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-xs font-mono uppercase tracking-wider text-ink-mute">Distanz</div>
-          <div className="font-display text-2xl md:text-3xl font-bold">
+          <div className="text-[10px] md:text-xs font-mono uppercase tracking-wider text-ink-mute">Distanz</div>
+          <div className="font-display text-xl md:text-3xl font-bold leading-none">
             {formatDistance(guess.distanceKm)}
           </div>
-          {placeLabel && (
+          {placeLabel && expanded && (
             <div className="text-xs text-ink-soft mt-1 italic truncate">→ {placeLabel}</div>
           )}
         </div>
         <div className="text-right shrink-0">
-          <div className="text-xs font-mono uppercase tracking-wider text-ink-mute">Punkte</div>
-          <div className="font-display text-3xl md:text-4xl font-black tabular-nums leading-none" style={{ color: "var(--pin)" }}>
+          <div className="text-[10px] md:text-xs font-mono uppercase tracking-wider text-ink-mute">Punkte</div>
+          <div className="font-display text-2xl md:text-4xl font-black tabular-nums leading-none" style={{ color: "var(--pin)" }}>
             +{displayScore.toLocaleString("de-DE")}
           </div>
-          <div className="text-[11px] font-mono text-ink-mute mt-0.5">
-            von {photoMax.toLocaleString("de-DE")} möglich
+          <div className="text-[10px] font-mono text-ink-mute mt-0.5">
+            von {photoMax.toLocaleString("de-DE")}
           </div>
         </div>
       </div>
@@ -648,70 +657,88 @@ function RevealCard({
           }}
         />
       </div>
-      <div className="flex flex-wrap gap-2 text-[11px] font-mono uppercase tracking-wider">
-        <span className="paper-card-soft px-2 py-1 inline-flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full" style={{ background: "var(--pin)" }} />
-          dein Tipp
-        </span>
-        <span className="paper-card-soft px-2 py-1 inline-flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full" style={{ background: "#2d5f3f" }} />
-          richtiger Ort
-        </span>
-        {hasNextHint && (
-          <span className="paper-card-soft px-2 py-1 inline-flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full" style={{ background: "#1f3a66" }} />
-            nächstes Foto
-          </span>
-        )}
-      </div>
-      {caption && (
-        <div className="text-sm text-ink-soft border-l-2 border-ink/30 pl-3 italic">
-          “{caption}”
-        </div>
-      )}
-      {story && (
-        <div className="text-sm text-ink border-l-2 pl-3 whitespace-pre-wrap" style={{ borderColor: "var(--mustard, #c89b1e)" }}>
-          {story}
-        </div>
-      )}
-      {photoId && isCloudEnabled() && (
-        <div className="flex items-center justify-end">
-          {reportSent ? (
-            <span className="text-[11px] font-mono uppercase tracking-wider text-ink-mute">
-              ✓ Gemeldet — danke
+      {expanded && (
+        <>
+          <div className="flex flex-wrap gap-2 text-[11px] font-mono uppercase tracking-wider">
+            <span className="paper-card-soft px-2 py-1 inline-flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full" style={{ background: "var(--pin)" }} />
+              dein Tipp
             </span>
-          ) : reportOpen ? (
-            <ReportPicker
-              photoId={photoId}
-              onCancel={() => setReportOpen(false)}
-              onDone={() => {
-                setReportOpen(false);
-                setReportSent(true);
-              }}
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={() => setReportOpen(true)}
-              className="text-[11px] font-mono uppercase tracking-wider text-ink-mute hover:text-ink inline-flex items-center gap-1"
-              title="Foto melden"
-            >
-              <Flag className="w-3 h-3" /> melden
-            </button>
+            <span className="paper-card-soft px-2 py-1 inline-flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full" style={{ background: "#2d5f3f" }} />
+              richtiger Ort
+            </span>
+            {hasNextHint && (
+              <span className="paper-card-soft px-2 py-1 inline-flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full" style={{ background: "#1f3a66" }} />
+                nächstes Foto
+              </span>
+            )}
+          </div>
+          {caption && (
+            <div className="text-sm text-ink-soft border-l-2 border-ink/30 pl-3 italic">
+              “{caption}”
+            </div>
           )}
-        </div>
+          {story && (
+            <div className="text-sm text-ink border-l-2 pl-3 whitespace-pre-wrap" style={{ borderColor: "var(--mustard, #c89b1e)" }}>
+              {story}
+            </div>
+          )}
+          {photoId && isCloudEnabled() && (
+            <div className="flex items-center justify-end">
+              {reportSent ? (
+                <span className="text-[11px] font-mono uppercase tracking-wider text-ink-mute">
+                  ✓ Gemeldet — danke
+                </span>
+              ) : reportOpen ? (
+                <ReportPicker
+                  photoId={photoId}
+                  onCancel={() => setReportOpen(false)}
+                  onDone={() => {
+                    setReportOpen(false);
+                    setReportSent(true);
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setReportOpen(true)}
+                  className="text-[11px] font-mono uppercase tracking-wider text-ink-mute hover:text-ink inline-flex items-center gap-1"
+                  title="Foto melden"
+                >
+                  <Flag className="w-3 h-3" /> melden
+                </button>
+              )}
+            </div>
+          )}
+        </>
       )}
-      <button
-        onClick={onNext}
-        className="btn-primary flex items-center justify-center gap-2 text-base py-2.5"
-        autoFocus
-      >
-        {isLast ? "Ergebnis sehen" : "Nächste Runde"}
-        <ArrowRight className="w-4 h-4" />
-        <span className="hidden md:inline text-[10px] font-mono opacity-70 border border-current rounded px-1 ml-1">
-          ⏎
-        </span>
-      </button>
+      <div className="flex items-center gap-2">
+        {hasDetails && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="btn-ghost text-xs py-2 px-3 inline-flex items-center gap-1 shrink-0"
+            title={expanded ? "Einklappen" : "Details zeigen"}
+            aria-expanded={expanded}
+          >
+            {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+            <span className="hidden sm:inline">{expanded ? "Weniger" : "Details"}</span>
+          </button>
+        )}
+        <button
+          onClick={onNext}
+          className="btn-primary flex-1 flex items-center justify-center gap-2 text-base py-2.5"
+          autoFocus
+        >
+          {isLast ? "Ergebnis sehen" : "Nächste Runde"}
+          <ArrowRight className="w-4 h-4" />
+          <span className="hidden md:inline text-[10px] font-mono opacity-70 border border-current rounded px-1 ml-1">
+            ⏎
+          </span>
+        </button>
+      </div>
     </motion.div>
   );
 }
