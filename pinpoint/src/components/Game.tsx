@@ -22,6 +22,7 @@ import { calcScore, formatDistance, haversineKm } from "@/lib/geo";
 import {
   DIFFICULTY_COLORS,
   DIFFICULTY_LABELS,
+  DIFFICULTY_MULTIPLIER,
   type GameMode,
   type Guess,
   type Photo,
@@ -136,6 +137,17 @@ export default function Game({ mode = "classic", laneId, albumId }: GameProps) {
     () => guesses.reduce((s, g) => s + g.score, 0),
     [guesses]
   );
+  const totalMax = useMemo(
+    () =>
+      photos.reduce(
+        (s, p) => s + Math.round(5000 * DIFFICULTY_MULTIPLIER[p.difficulty]),
+        0,
+      ),
+    [photos],
+  );
+  const photoMax = current
+    ? Math.round(5000 * DIFFICULTY_MULTIPLIER[current.difficulty])
+    : 5000;
 
   const submitInternal = (g: { lat: number; lng: number } | null) => {
     if (!current) return;
@@ -348,13 +360,28 @@ export default function Game({ mode = "classic", laneId, albumId }: GameProps) {
               No-Move
             </div>
           )}
-          <div className="flex items-center gap-1 shrink-0" style={{ color: "var(--pin)" }}>
+          <div className="flex items-center gap-1 shrink-0" style={{ color: "var(--pin)" }} title={`${totalScore.toLocaleString("de-DE")} von ${totalMax.toLocaleString("de-DE")} möglichen Punkten`}>
             <Trophy className="w-4 h-4" />
             <span className="font-display font-bold tabular-nums text-base md:text-lg">
               {totalScore.toLocaleString("de-DE")}
             </span>
+            <span className="hidden sm:inline font-mono text-[10px] md:text-xs text-ink-mute">
+              / {totalMax.toLocaleString("de-DE")}
+            </span>
           </div>
         </div>
+      </div>
+      <div
+        className="h-1 bg-paper-warm border-b-2 border-ink/10"
+        aria-hidden
+      >
+        <div
+          className="h-full transition-[width] duration-700 ease-out"
+          style={{
+            width: `${totalMax > 0 ? Math.min(100, (totalScore / totalMax) * 100) : 0}%`,
+            background: "var(--pin)",
+          }}
+        />
       </div>
 
       <div className="flex-1 grid grid-cols-1 grid-rows-[45dvh_1fr] lg:grid-rows-1 lg:grid-cols-[1fr_1fr] overflow-hidden min-h-0">
@@ -470,25 +497,24 @@ export default function Game({ mode = "classic", laneId, albumId }: GameProps) {
               ]}
             />
           )}
-
-          <AnimatePresence mode="wait">
-            {phase === "reveal" && lastGuess && (
-              <RevealCard
-                key="reveal"
-                guess={lastGuess}
-                truth={current ? { lat: current.lat, lng: current.lng } : null}
-                caption={current?.caption}
-                story={current?.story}
-                photoId={current?.id}
-                onNext={next}
-                isLast={index + 1 >= photos.length}
-                hasNextHint={!!nextPhoto}
-              />
-            )}
-          </AnimatePresence>
         </div>
       </div>
+
       <AnimatePresence>
+        {phase === "reveal" && lastGuess && (
+          <RevealCard
+            key="reveal"
+            guess={lastGuess}
+            truth={current ? { lat: current.lat, lng: current.lng } : null}
+            caption={current?.caption}
+            story={current?.story}
+            photoId={current?.id}
+            photoMax={photoMax}
+            onNext={next}
+            isLast={index + 1 >= photos.length}
+            hasNextHint={!!nextPhoto}
+          />
+        )}
         {phase === "playing" && (
           <motion.div
             key="play-controls"
@@ -540,6 +566,7 @@ function RevealCard({
   caption,
   story,
   photoId,
+  photoMax,
   onNext,
   isLast,
   hasNextHint,
@@ -549,6 +576,7 @@ function RevealCard({
   caption?: string;
   story?: string;
   photoId?: string;
+  photoMax: number;
   onNext: () => void;
   isLast: boolean;
   hasNextHint: boolean;
@@ -585,33 +613,57 @@ function RevealCard({
 
   return (
     <motion.div
-      initial={{ y: 80, opacity: 0 }}
+      initial={{ y: 100, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
-      exit={{ y: 80, opacity: 0 }}
-      className="absolute bottom-4 left-4 right-4 paper-card p-5 flex flex-col gap-3"
+      exit={{ y: 100, opacity: 0 }}
+      className="fixed left-0 right-0 bottom-0 lg:left-1/2 lg:right-4 z-40 paper-card mx-2 mb-2 lg:mb-4 lg:mx-4 p-4 md:p-5 flex flex-col gap-3 max-h-[60dvh] overflow-y-auto"
+      style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}
     >
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <div className="text-xs font-mono uppercase tracking-wider text-ink-mute">Distanz</div>
-          <div className="font-display text-2xl font-bold">
+          <div className="font-display text-2xl md:text-3xl font-bold">
             {formatDistance(guess.distanceKm)}
           </div>
           {placeLabel && (
-            <div className="text-xs text-ink-soft mt-1 italic">→ {placeLabel}</div>
+            <div className="text-xs text-ink-soft mt-1 italic truncate">→ {placeLabel}</div>
           )}
         </div>
-        <div className="text-right">
+        <div className="text-right shrink-0">
           <div className="text-xs font-mono uppercase tracking-wider text-ink-mute">Punkte</div>
-          <div className="font-display text-4xl font-black tabular-nums" style={{ color: "var(--pin)" }}>
+          <div className="font-display text-3xl md:text-4xl font-black tabular-nums leading-none" style={{ color: "var(--pin)" }}>
             +{displayScore.toLocaleString("de-DE")}
+          </div>
+          <div className="text-[11px] font-mono text-ink-mute mt-0.5">
+            von {photoMax.toLocaleString("de-DE")} möglich
           </div>
         </div>
       </div>
-      {hasNextHint && (
-        <div className="stamp-tag self-start" style={{ borderColor: "var(--postal-blue)", color: "var(--postal-blue)" }}>
-          🛣️ Nächstes Foto — blauer Pin
-        </div>
-      )}
+      <div className="h-1.5 rounded-full overflow-hidden bg-ink/10" aria-hidden>
+        <div
+          className="h-full transition-[width] duration-700 ease-out"
+          style={{
+            width: `${photoMax > 0 ? Math.min(100, (displayScore / photoMax) * 100) : 0}%`,
+            background: "var(--pin)",
+          }}
+        />
+      </div>
+      <div className="flex flex-wrap gap-2 text-[11px] font-mono uppercase tracking-wider">
+        <span className="paper-card-soft px-2 py-1 inline-flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full" style={{ background: "var(--pin)" }} />
+          dein Tipp
+        </span>
+        <span className="paper-card-soft px-2 py-1 inline-flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full" style={{ background: "#2d5f3f" }} />
+          richtiger Ort
+        </span>
+        {hasNextHint && (
+          <span className="paper-card-soft px-2 py-1 inline-flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full" style={{ background: "#1f3a66" }} />
+            nächstes Foto
+          </span>
+        )}
+      </div>
       {caption && (
         <div className="text-sm text-ink-soft border-l-2 border-ink/30 pl-3 italic">
           “{caption}”
