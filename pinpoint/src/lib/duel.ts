@@ -19,6 +19,7 @@ export interface DuelRoom {
   code: string;
   host: string;
   challenger: string | null;
+  album_id: string | null;
   photo_ids: string[];
   state: "waiting" | "playing" | "finished";
   host_score: number;
@@ -26,7 +27,10 @@ export interface DuelRoom {
   current_round: number;
 }
 
-export async function createDuelRoom(photoIds: string[]): Promise<DuelRoom> {
+export async function createDuelRoom(args: {
+  photoIds: string[];
+  albumId?: string | null;
+}): Promise<DuelRoom> {
   const sb = getSupabase();
   if (!sb) throw new Error("Cloud-Modus nicht konfiguriert.");
   const { data: userData } = await sb.auth.getUser();
@@ -36,7 +40,12 @@ export async function createDuelRoom(photoIds: string[]): Promise<DuelRoom> {
   const code = Math.random().toString(36).slice(2, 8).toUpperCase();
   const { data, error } = await sb
     .from("duel_rooms")
-    .insert({ host: user.id, code, photo_ids: photoIds })
+    .insert({
+      host: user.id,
+      code,
+      photo_ids: args.photoIds,
+      album_id: args.albumId ?? null,
+    })
     .select()
     .single();
   if (error) throw error;

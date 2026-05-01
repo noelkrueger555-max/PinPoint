@@ -34,6 +34,13 @@ export default function AlbumsPage() {
     load();
   }, []);
 
+  // Pre-fill join code from invite link `?code=...`.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const c = new URLSearchParams(window.location.search).get("code");
+    if (c) setJoinCode(c.toUpperCase());
+  }, []);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;

@@ -19,6 +19,7 @@ export interface LobbyPayload {
   id: string;
   code: string;
   title: string;
+  album_id: string | null;
   photo_ids: string[];
   lane_ids: string[];
   owner: string;
@@ -28,6 +29,7 @@ export interface LobbyPayload {
 
 export async function createLobby(args: {
   title: string;
+  albumId?: string | null;
   photoIds: string[];
   laneIds?: string[];
   expiresAt?: Date | null;
@@ -47,6 +49,7 @@ export async function createLobby(args: {
         owner: user.id,
         code,
         title: args.title,
+        album_id: args.albumId ?? null,
         photo_ids: args.photoIds,
         lane_ids: args.laneIds ?? [],
         expires_at: args.expiresAt ? args.expiresAt.toISOString() : null,

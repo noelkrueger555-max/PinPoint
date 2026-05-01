@@ -2,13 +2,16 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Download, Upload, Check, AlertTriangle, Loader2, Cloud, Copy, LogIn } from "lucide-react";
+import { Download, Upload, Check, AlertTriangle, Loader2, Cloud, Copy, LogIn, Share2 } from "lucide-react";
 import { exportLobby, importLobby, type ImportResult } from "@/lib/share";
 import { listLanes, listPhotos } from "@/lib/store";
 import { isCloudEnabled, getCurrentUser, signInWithMagicLink, signInWithGoogle, signOut } from "@/lib/supabase";
 import { syncAllToCloud } from "@/lib/cloud-sync";
 import { toast } from "@/lib/toast";
 import { createLobby } from "@/lib/lobby";
+import { listAlbumPhotos } from "@/lib/albums";
+import { lobbyInviteUrl, shareInvite } from "@/lib/invite";
+import AlbumPicker from "@/components/AlbumPicker";
 import PageHeader from "@/components/PageHeader";
 import AuthGate from "@/components/AuthGate";
 
@@ -30,6 +33,7 @@ export default function SharePage() {
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [lobbyCode, setLobbyCode] = useState<string | null>(null);
   const [lobbyExpiry, setLobbyExpiry] = useState<"24h" | "7d" | "never">("7d");
+  const [lobbyAlbumId, setLobbyAlbumId] = useState<string | null>(null);
 
   useEffect(() => {
     listPhotos().then((p) => setPhotoCount(p.length));
@@ -315,59 +319,77 @@ export default function SharePage() {
                   </div>
                   <div className="flex flex-wrap items-center justify-center gap-2">
                     <button
+                      onClick={() =>
+                        shareInvite({
+                          title: "PinPoint Lobby",
+                          text: `Tritt meiner PinPoint-Lobby bei – Code ${lobbyCode}`,
+                          url: lobbyInviteUrl(lobbyCode),
+                        })
+                      }
+                      className="btn-primary"
+                    >
+                      <Share2 className="w-3.5 h-3.5" />
+                      Einladung teilen
+                    </button>
+                    <button
                       onClick={() => navigator.clipboard.writeText(lobbyCode)}
                       className="btn-ghost"
                     >
                       <Copy className="w-3.5 h-3.5" />
                       Code kopieren
                     </button>
-                    <button
-                      onClick={() => {
-                        const url = `${window.location.origin}/play/lobby?code=${lobbyCode}`;
-                        navigator.clipboard.writeText(url);
-                        toast.success("Lobby-Link kopiert");
-                      }}
-                      className="btn-ghost"
-                    >
-                      <Copy className="w-3.5 h-3.5" />
-                      Link kopieren
-                    </button>
                     <Link
                       href={`/play/lobby?code=${lobbyCode}`}
-                      className="btn-primary"
+                      className="btn-ghost"
                     >
-                      Spielen →
+                      Selbst spielen →
                     </Link>
                   </div>
                 </div>
               ) : (
-                <button
-                  onClick={async () => {
-                    try {
-                      const ps = await listPhotos();
-                      const ls = await listLanes();
-                      const expiresAt =
-                        lobbyExpiry === "never"
-                          ? null
-                          : lobbyExpiry === "24h"
-                            ? new Date(Date.now() + 24 * 60 * 60 * 1000)
-                            : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-                      const lobby = await createLobby({
-                        title: title || "Lobby",
-                        photoIds: ps.map((p) => p.id),
-                        laneIds: ls.map((l) => l.id),
-                        expiresAt,
-                      });
-                      setLobbyCode(lobby.code);
-                    } catch (e) {
-                      setError(e instanceof Error ? e.message : "Code-Erstellung fehlgeschlagen");
-                    }
-                  }}
-                  className="btn-primary w-full"
-                  disabled={photoCount === 0}
-                >
-                  Code erstellen
-                </button>
+                <>
+                  <div className="text-xs font-mono uppercase tracking-wider text-ink-mute mb-2">
+                    Album wählen
+                  </div>
+                  <AlbumPicker value={lobbyAlbumId} onChange={setLobbyAlbumId} minPhotos={1} />
+                  <button
+                    onClick={async () => {
+                      try {
+                        let photoIds: string[] = [];
+                        let title2 = title || "Lobby";
+                        if (lobbyAlbumId) {
+                          const ps = await listAlbumPhotos(lobbyAlbumId);
+                          photoIds = ps.map((p) => p.id);
+                          if (photoIds.length === 0) throw new Error("Album hat keine Fotos.");
+                        } else {
+                          const ps = await listPhotos();
+                          photoIds = ps.map((p) => p.id);
+                        }
+                        const ls = await listLanes();
+                        const expiresAt =
+                          lobbyExpiry === "never"
+                            ? null
+                            : lobbyExpiry === "24h"
+                              ? new Date(Date.now() + 24 * 60 * 60 * 1000)
+                              : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+                        const lobby = await createLobby({
+                          title: title2,
+                          albumId: lobbyAlbumId,
+                          photoIds,
+                          laneIds: ls.map((l) => l.id),
+                          expiresAt,
+                        });
+                        setLobbyCode(lobby.code);
+                      } catch (e) {
+                        setError(e instanceof Error ? e.message : "Code-Erstellung fehlgeschlagen");
+                      }
+                    }}
+                    className="btn-primary w-full mt-3"
+                    disabled={!lobbyAlbumId && photoCount === 0}
+                  >
+                    Code erstellen
+                  </button>
+                </>
               )}
               <div className="mt-4">
                 <div className="text-xs font-mono uppercase tracking-wider text-ink-mute mb-2">

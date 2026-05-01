@@ -11,7 +11,6 @@ import {
   removeFriend,
   searchProfiles,
   sendFriendRequest,
-  updateProfile,
   type FriendRow,
   type ProfileLite,
 } from "@/lib/friends";
@@ -35,12 +34,6 @@ function FriendsInner() {
   const [results, setResults] = useState<ProfileLite[]>([]);
   const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
-  const [savingProfile, setSavingProfile] = useState(false);
-  const [profileSaved, setProfileSaved] = useState(false);
-  const [editName, setEditName] = useState("");
-  const [editUsername, setEditUsername] = useState("");
-  const [editBio, setEditBio] = useState("");
-  const [editAvatarUrl, setEditAvatarUrl] = useState("");
 
   const refresh = async () => {
     const [u, p, list] = await Promise.all([
@@ -50,19 +43,6 @@ function FriendsInner() {
     ]);
     setMyUserId(u?.id ?? null);
     setMe(p);
-    setEditName(p?.display_name ?? "");
-    setEditUsername(p?.username ?? "");
-    setEditAvatarUrl(p?.avatar_url ?? "");
-    // bio is fetched lazily because ProfileLite doesn't include it
-    if (u?.id) {
-      const sb = (await import("@/lib/supabase")).getSupabase();
-      if (sb) {
-        const { data: row } = await sb.from("profiles").select("bio").eq("id", u.id).maybeSingle();
-        if (row && typeof (row as { bio?: string }).bio === "string") {
-          setEditBio((row as { bio: string }).bio);
-        }
-      }
-    }
     setFriends(list);
     setLoading(false);
   };
@@ -128,25 +108,7 @@ function FriendsInner() {
     }
   };
 
-  const saveProfile = async () => {
-    setSavingProfile(true);
-    setProfileSaved(false);
-    try {
-      await updateProfile({
-        display_name: editName,
-        username: editUsername,
-        bio: editBio,
-        avatar_url: editAvatarUrl.trim() || undefined,
-      });
-      setProfileSaved(true);
-      await refresh();
-      setTimeout(() => setProfileSaved(false), 2500);
-    } catch (e) {
-      console.warn(e);
-    } finally {
-      setSavingProfile(false);
-    }
-  };
+
 
   return (
     <main className="max-w-[1100px] mx-auto px-6 md:px-8 pt-8 pb-20 relative z-[2]">
@@ -166,69 +128,28 @@ function FriendsInner() {
         <div className="mt-12 grid lg:grid-cols-[1.1fr_1fr] gap-10">
           {/* LEFT */}
           <div className="space-y-10">
-            {/* PROFILE */}
-            <section className="paper-card p-6">
-              <h2 className="font-display text-xl font-bold mb-4">Dein Profil</h2>
-              <div className="space-y-3">
-                <label className="block">
-                  <span className="text-xs uppercase tracking-wider font-mono text-ink-mute">Anzeigename</span>
-                  <input
-                    type="text"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    maxLength={40}
-                    className="paper-input w-full mt-1"
-                    placeholder="z. B. Noel"
-                  />
-                </label>
-                <label className="block">
-                  <span className="text-xs uppercase tracking-wider font-mono text-ink-mute">Username (eindeutig)</span>
-                  <input
-                    type="text"
-                    value={editUsername}
-                    onChange={(e) =>
-                      setEditUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))
-                    }
-                    maxLength={24}
-                    className="paper-input w-full mt-1 font-mono"
-                    placeholder="z. B. noel_k"
-                  />
-                  <span className="text-[11px] font-mono text-ink-mute mt-1 block">
-                    Nur a–z, 0–9, _. Wird für Freunde-Suche genutzt.
-                  </span>
-                </label>
-                <label className="block">
-                  <span className="text-xs uppercase tracking-wider font-mono text-ink-mute">Bio</span>
-                  <textarea
-                    value={editBio}
-                    onChange={(e) => setEditBio(e.target.value.slice(0, 280))}
-                    maxLength={280}
-                    rows={3}
-                    className="paper-input w-full mt-1 resize-none"
-                    placeholder="Kurze Beschreibung (max 280 Zeichen)"
-                  />
-                  <span className="text-[11px] font-mono text-ink-mute mt-1 block">
-                    {editBio.length} / 280
-                  </span>
-                </label>
-                <label className="block">
-                  <span className="text-xs uppercase tracking-wider font-mono text-ink-mute">Avatar-URL</span>
-                  <input
-                    type="url"
-                    value={editAvatarUrl}
-                    onChange={(e) => setEditAvatarUrl(e.target.value)}
-                    className="paper-input w-full mt-1 font-mono text-xs"
-                    placeholder="https://…"
-                  />
-                </label>
-                <button
-                  onClick={saveProfile}
-                  disabled={savingProfile || !editName.trim()}
-                  className="btn-primary mt-2 disabled:opacity-60"
-                >
-                  {savingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : profileSaved ? "Gespeichert ✓" : "Profil speichern"}
-                </button>
+            {/* PROFILE — slim link to /account */}
+            <section className="paper-card p-5 flex items-center gap-4">
+              <span className="avatar-bubble" style={{ width: 52, height: 52, fontSize: 22 }}>
+                {me?.avatar_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={me.avatar_url} alt="" />
+                ) : (
+                  (me?.display_name ?? "?").slice(0, 1).toUpperCase()
+                )}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="font-bold truncate">{me?.display_name ?? "Dein Profil"}</div>
+                {me?.username && (
+                  <div className="text-xs font-mono text-pin truncate">@{me.username}</div>
+                )}
+                <div className="text-xs text-ink-mute mt-0.5">
+                  Profil, Bio &amp; Avatar bearbeiten
+                </div>
               </div>
+              <a href="/account" className="btn-pill-light text-xs no-underline whitespace-nowrap">
+                Bearbeiten →
+              </a>
             </section>
 
             {/* SEARCH */}

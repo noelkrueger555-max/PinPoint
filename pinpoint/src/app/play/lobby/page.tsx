@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
-import AuthGate from "@/components/AuthGate";
+import GuestGate from "@/components/GuestGate";
 import LobbyPlay from "@/components/LobbyPlay";
 
 function LobbyEntry() {
@@ -21,7 +21,7 @@ function LobbyEntry() {
   }
 
   return (
-    <div className="paper-card p-7 max-w-xl mx-auto mt-12">
+    <div className="paper-card p-6 md:p-7 max-w-xl mx-auto mt-8 md:mt-12">
       <div className="dashed-pill mb-3">🔑 Lobby beitreten</div>
       <div className="font-display text-2xl font-bold">Code eingeben</div>
       <p className="text-sm text-ink-soft mt-2">
@@ -29,8 +29,12 @@ function LobbyEntry() {
       </p>
       <input
         value={input}
-        onChange={(e) => setInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+        onChange={(e) =>
+          setInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))
+        }
         maxLength={6}
+        inputMode="text"
+        autoCapitalize="characters"
         placeholder="ABC123"
         className="paper-input mt-4 font-mono uppercase tracking-[0.3em] text-center text-lg"
       />
@@ -57,20 +61,13 @@ function LobbyEntry() {
 
 export default function LobbyPage() {
   return (
-    <AuthGate
-      reason={
-        <>
-          Lobby-Modus braucht ein <em className="accent-italic">Konto</em> für die
-          Server-Validierung.
-        </>
-      }
-    >
+    <GuestGate inviteLabel="Lobby">
       <PageHeader />
-      <main className="max-w-[1280px] mx-auto px-6 md:px-8 pt-6 pb-20 relative z-[2]">
+      <main className="max-w-[1280px] mx-auto px-4 md:px-8 pt-6 pb-20 relative z-[2]">
         <Suspense fallback={null}>
           <LobbyEntry />
         </Suspense>
       </main>
-    </AuthGate>
+    </GuestGate>
   );
 }

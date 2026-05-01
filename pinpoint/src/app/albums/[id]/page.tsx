@@ -16,6 +16,7 @@ import {
   LogOut,
   Pencil,
   Save,
+  Share2,
 } from "lucide-react";
 import {
   getAlbum,
@@ -40,6 +41,7 @@ import type { Photo } from "@/lib/types";
 import PageHeader from "@/components/PageHeader";
 import AuthGate from "@/components/AuthGate";
 import { toast } from "@/lib/toast";
+import { albumInviteUrl, shareInvite } from "@/lib/invite";
 
 export default function AlbumDetailPage({
   params,
@@ -127,6 +129,15 @@ function AlbumDetail({ id }: { id: string }) {
     } catch {
       // ignore
     }
+  };
+
+  const onShareInvite = () => {
+    if (!album) return;
+    shareInvite({
+      title: `PinPoint Album: ${album.title}`,
+      text: `Tritt meinem PinPoint-Album "${album.title}" bei`,
+      url: albumInviteUrl(album.invite_code),
+    });
   };
 
   const onRemovePhoto = async (photoId: string) => {
@@ -265,23 +276,34 @@ function AlbumDetail({ id }: { id: string }) {
           </div>
 
           <div className="flex flex-col gap-2 items-stretch md:items-end w-full md:w-auto">
-            <button
-              onClick={copyCode}
-              className="paper-card px-4 py-2 flex items-center gap-2 hover:shadow-[4px_4px_0_var(--pin)] justify-between md:justify-start"
-              title="Einladungs-Code kopieren"
-            >
-              <span className="text-xs font-mono uppercase tracking-wider text-ink-mute">
-                Code
-              </span>
-              <span className="font-mono font-bold tracking-[0.3em] text-lg">
-                {album.invite_code}
-              </span>
-              {copied ? (
-                <Check className="w-4 h-4 text-stamp-green" />
-              ) : (
-                <Copy className="w-4 h-4 text-ink-mute" />
-              )}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={copyCode}
+                className="paper-card px-4 py-2 flex items-center gap-2 hover:shadow-[4px_4px_0_var(--pin)] justify-between md:justify-start flex-1"
+                title="Einladungs-Code kopieren"
+              >
+                <span className="text-xs font-mono uppercase tracking-wider text-ink-mute">
+                  Code
+                </span>
+                <span className="font-mono font-bold tracking-[0.3em] text-lg">
+                  {album.invite_code}
+                </span>
+                {copied ? (
+                  <Check className="w-4 h-4 text-stamp-green" />
+                ) : (
+                  <Copy className="w-4 h-4 text-ink-mute" />
+                )}
+              </button>
+              <button
+                onClick={onShareInvite}
+                className="btn-ghost shrink-0"
+                title="Einladungslink teilen"
+                aria-label="Einladungslink teilen"
+              >
+                <Share2 className="w-4 h-4" />
+                <span className="hidden sm:inline">Teilen</span>
+              </button>
+            </div>
             <div className="flex gap-2">
               {photos.length > 0 && (
                 <Link

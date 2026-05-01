@@ -496,8 +496,11 @@ export default function Game({ mode = "classic", laneId, albumId }: GameProps) {
                 to: { lat: current.lat, lng: current.lng },
               }}
               fitBoundsTo={[
-                { lat: lastGuess.guessLat, lng: lastGuess.guessLng },
+                // Truth FIRST so MapPicker uses it as focus point when
+                // the guess is so far away that fitBounds would otherwise
+                // zoom out to the whole globe.
                 { lat: current.lat, lng: current.lng },
+                { lat: lastGuess.guessLat, lng: lastGuess.guessLng },
                 ...(nextPhoto
                   ? [{ lat: nextPhoto.lat, lng: nextPhoto.lng }]
                   : []),

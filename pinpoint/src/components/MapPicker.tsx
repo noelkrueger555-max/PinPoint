@@ -379,11 +379,32 @@ export default function MapPicker({
     const apply = () => {
       try { map.resize(); } catch {}
       try {
-        map.fitBounds(bounds, {
+        // First, ask MapLibre what zoom fitBounds would pick. If it would
+        // zoom out beyond ~continent level (zoom < 4), the guess and the
+        // truth are far apart — instead of showing the whole globe, just
+        // fly to the first point (the truth/focus point in our usage) at
+        // a sensible zoom. The other pin is still on the map and the user
+        // can pan/zoom to find it.
+        const cam = map.cameraForBounds(bounds, {
           padding: fitBoundsPadding ?? 80,
-          duration: 1200,
           maxZoom: 8,
         });
+        const FLOOR = 4;
+        if (cam && typeof cam.zoom === "number" && cam.zoom < FLOOR) {
+          const focus = fitBoundsTo[0];
+          map.flyTo({
+            center: [focus.lng, focus.lat],
+            zoom: 5,
+            duration: 1400,
+            essential: true,
+          });
+        } else {
+          map.fitBounds(bounds, {
+            padding: fitBoundsPadding ?? 80,
+            duration: 1200,
+            maxZoom: 8,
+          });
+        }
       } catch {}
     };
     if (map.isStyleLoaded()) apply();

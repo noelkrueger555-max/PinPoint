@@ -67,6 +67,7 @@ export default function DuelMatch({
           owner: room.host,
           created_at: "",
           expires_at: null,
+          album_id: room.album_id ?? null,
         };
         const data = await fetchLobbyPhotos(synthetic);
         if (cancelled) return;

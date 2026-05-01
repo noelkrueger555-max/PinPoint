@@ -241,11 +241,14 @@ create table if not exists public.lobbies (
   owner      uuid not null references public.profiles(id) on delete cascade,
   code       text unique not null,
   title      text not null default 'Lobby',
+  album_id   uuid references public.albums(id) on delete set null,
   photo_ids  uuid[] not null default '{}',
   lane_ids   uuid[] not null default '{}',
   created_at timestamptz not null default now(),
   expires_at timestamptz
 );
+-- migrate existing tables that pre-date album_id
+alter table public.lobbies add column if not exists album_id uuid references public.albums(id) on delete set null;
 create index if not exists lobbies_code_idx on public.lobbies(code);
 
 create table if not exists public.sessions (
@@ -318,6 +321,7 @@ create table if not exists public.duel_rooms (
   code              text unique not null,
   host              uuid not null references public.profiles(id) on delete cascade,
   challenger        uuid references public.profiles(id) on delete set null,
+  album_id          uuid references public.albums(id) on delete set null,
   photo_ids         uuid[] not null,
   state             text not null default 'waiting' check (state in ('waiting','playing','finished')),
   host_score        int not null default 0,
@@ -325,6 +329,8 @@ create table if not exists public.duel_rooms (
   current_round     smallint not null default 0,
   created_at        timestamptz not null default now()
 );
+-- migrate existing tables that pre-date album_id
+alter table public.duel_rooms add column if not exists album_id uuid references public.albums(id) on delete set null;
 create index if not exists duel_rooms_code_idx on public.duel_rooms(code);
 
 
@@ -545,9 +551,15 @@ create policy "season public read" on public.season_scores for select using (tru
 drop policy if exists "duel public read"          on public.duel_rooms;
 drop policy if exists "duel host insert"          on public.duel_rooms;
 drop policy if exists "duel participants update"  on public.duel_rooms;
+drop policy if exists "duel join"                 on public.duel_rooms;
 create policy "duel public read"          on public.duel_rooms for select using (true);
 create policy "duel host insert"          on public.duel_rooms for insert with check (auth.uid() = host);
-create policy "duel participants update"  on public.duel_rooms for update using (auth.uid() in (host, challenger));
+-- Allow either: existing participants update freely, OR an anonymous waiting
+-- room can claim a challenger slot as long as it's still empty.
+create policy "duel participants update"  on public.duel_rooms for update using (
+  auth.uid() in (host, challenger)
+  or (challenger is null and state = 'waiting' and auth.uid() is not null)
+);
 
 
 -- friendships -------------------------------------------------

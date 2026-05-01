@@ -181,7 +181,26 @@ export async function getAlbumByInviteCode(code: string): Promise<Album | null> 
     .select("id, owner, title, description, cover_photo, invite_code, created_at")
     .eq("invite_code", code.toUpperCase())
     .maybeSingle();
-  return (data as Album | null) ?? null;
+  const album = (data as Album | null) ?? null;
+  if (!album) return null;
+  // Best-effort enrichment — counts + my_role for nicer landing page UX.
+  const [{ count: photoCount }, { count: memberCount }, userRes] = await Promise.all([
+    sb.from("album_photos").select("photo_id", { count: "exact", head: true }).eq("album_id", album.id),
+    sb.from("album_members").select("member", { count: "exact", head: true }).eq("album_id", album.id),
+    sb.auth.getUser(),
+  ]);
+  album.photo_count = photoCount ?? 0;
+  album.member_count = memberCount ?? 1;
+  if (userRes.data.user) {
+    const { data: mem } = await sb
+      .from("album_members")
+      .select("role")
+      .eq("album_id", album.id)
+      .eq("member", userRes.data.user.id)
+      .maybeSingle();
+    if (mem?.role) album.my_role = mem.role as Album["my_role"];
+  }
+  return album;
 }
 
 export async function joinAlbumByCode(code: string): Promise<Album> {
