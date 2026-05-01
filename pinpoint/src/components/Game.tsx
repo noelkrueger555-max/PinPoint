@@ -472,45 +472,6 @@ export default function Game({ mode = "classic", laneId, albumId }: GameProps) {
           )}
 
           <AnimatePresence mode="wait">
-            {phase === "playing" && (
-              <motion.div
-                key="play-controls"
-                initial={{ y: 80, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: 80, opacity: 0 }}
-                className="absolute bottom-4 left-4 right-4 paper-card p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3"
-              >
-                <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-ink-soft">
-                  <MapPin className="w-3 h-3" />
-                  {guess
-                    ? `${guess.lat.toFixed(3)}, ${guess.lng.toFixed(3)}`
-                    : "Setze einen Pin auf die Karte"}
-                </div>
-                <div className="flex items-center gap-2">
-                  {guess && (
-                    <button
-                      onClick={() => setGuess(null)}
-                      className="btn-ghost text-xs py-2 px-3"
-                      title="Pin entfernen"
-                    >
-                      Zurücksetzen
-                    </button>
-                  )}
-                  <button
-                    onClick={submit}
-                    disabled={!guess}
-                    className="btn-primary text-base px-6 py-2.5 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Tipp abgeben (Enter / Leertaste)"
-                  >
-                    <MapPin className="w-4 h-4" />
-                    Tipp abgeben
-                    <span className="hidden md:inline text-[10px] font-mono opacity-70 border border-current rounded px-1 ml-1">
-                      ⏎
-                    </span>
-                  </button>
-                </div>
-              </motion.div>
-            )}
             {phase === "reveal" && lastGuess && (
               <RevealCard
                 key="reveal"
@@ -527,6 +488,48 @@ export default function Game({ mode = "classic", laneId, albumId }: GameProps) {
           </AnimatePresence>
         </div>
       </div>
+      <AnimatePresence>
+        {phase === "playing" && (
+          <motion.div
+            key="play-controls"
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            className="fixed left-0 right-0 bottom-0 lg:left-1/2 lg:right-4 z-40 paper-card mx-2 mb-2 lg:mb-4 lg:mx-4 p-3 md:p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 md:gap-3"
+            style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
+          >
+            <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-ink-soft">
+              <MapPin className="w-3 h-3" />
+              {guess
+                ? `${guess.lat.toFixed(3)}, ${guess.lng.toFixed(3)}`
+                : "Setze einen Pin auf die Karte"}
+            </div>
+            <div className="flex items-center gap-2">
+              {guess && (
+                <button
+                  onClick={() => setGuess(null)}
+                  className="btn-ghost text-xs py-2 px-3"
+                  title="Pin entfernen"
+                >
+                  Zurücksetzen
+                </button>
+              )}
+              <button
+                onClick={submit}
+                disabled={!guess}
+                className="btn-primary text-base px-6 py-2.5 flex-1 sm:flex-none flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Tipp abgeben (Enter / Leertaste)"
+              >
+                <MapPin className="w-4 h-4" />
+                Tipp abgeben
+                <span className="hidden md:inline text-[10px] font-mono opacity-70 border border-current rounded px-1 ml-1">
+                  ⏎
+                </span>
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
