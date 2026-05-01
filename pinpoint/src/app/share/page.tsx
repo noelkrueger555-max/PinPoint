@@ -35,6 +35,13 @@ export default function SharePage() {
   const [lobbyExpiry, setLobbyExpiry] = useState<"24h" | "7d" | "never">("7d");
   const [lobbyAlbumId, setLobbyAlbumId] = useState<string | null>(null);
 
+  // Pre-fill album from `?album=ID` (e.g., from album page "Mit Freunden" CTA).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const a = new URLSearchParams(window.location.search).get("album");
+    if (a) setLobbyAlbumId(a);
+  }, []);
+
   useEffect(() => {
     listPhotos().then((p) => setPhotoCount(p.length));
     listLanes().then((l) => setLaneCount(l.length));

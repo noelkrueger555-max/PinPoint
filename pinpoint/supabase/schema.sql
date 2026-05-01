@@ -213,17 +213,42 @@ create table if not exists public.album_members (
   member    uuid not null references public.profiles(id) on delete cascade,
   role      text not null default 'player' check (role in ('owner','editor','player')),
   joined_at timestamptz not null default now(),
+  -- Per-member granular permissions. Owners always have all true.
+  -- Joiners default: can_add_photos=true so they can immediately contribute.
+  can_add_photos    boolean not null default true,
+  can_remove_photos boolean not null default false,
+  can_invite        boolean not null default false,
   primary key (album_id, member)
 );
 create index if not exists album_members_member_idx on public.album_members(member);
 
--- Auto-add the owner as a member with role 'owner'.
+-- Backfill new permission columns for existing rows (idempotent).
+alter table public.album_members add column if not exists can_add_photos    boolean not null default true;
+alter table public.album_members add column if not exists can_remove_photos boolean not null default false;
+alter table public.album_members add column if not exists can_invite        boolean not null default false;
+
+-- Album activity log: lightweight audit trail for member-visible events.
+create table if not exists public.album_activity (
+  id         uuid primary key default uuid_generate_v4(),
+  album_id   uuid not null references public.albums(id) on delete cascade,
+  actor      uuid references public.profiles(id) on delete set null,
+  kind       text not null check (kind in ('joined','left','photo_added','photo_removed','renamed','invited','permissions_changed','removed_member')),
+  payload    jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists album_activity_album_idx on public.album_activity(album_id, created_at desc);
+
+-- Auto-add the owner as a member with role 'owner' AND full permissions.
 create or replace function public.handle_new_album()
 returns trigger language plpgsql security definer as $$
 begin
-  insert into public.album_members (album_id, member, role)
-  values (new.id, new.owner, 'owner')
-  on conflict (album_id, member) do update set role = 'owner';
+  insert into public.album_members (album_id, member, role, can_add_photos, can_remove_photos, can_invite)
+  values (new.id, new.owner, 'owner', true, true, true)
+  on conflict (album_id, member) do update
+    set role = 'owner',
+        can_add_photos = true,
+        can_remove_photos = true,
+        can_invite = true;
   return new;
 end; $$;
 
@@ -312,6 +337,17 @@ create table if not exists public.season_scores (
   primary key (season_id, player)
 );
 
+-- Per-album best scores (one row per player per album, kept at their max).
+create table if not exists public.album_scores (
+  album_id   uuid not null references public.albums(id)   on delete cascade,
+  player     uuid not null references public.profiles(id) on delete cascade,
+  best_score int  not null,
+  rounds     int  not null default 5,
+  updated_at timestamptz not null default now(),
+  primary key (album_id, player)
+);
+create index if not exists album_scores_rank on public.album_scores(album_id, best_score desc);
+
 
 -- ─────────────────────────────────────────────
 -- 7. Duel rooms
@@ -382,6 +418,7 @@ alter table public.album_photos   enable row level security;
 alter table public.album_members  enable row level security;
 alter table public.friendships    enable row level security;
 alter table public.reports        enable row level security;
+alter table public.album_scores   enable row level security;
 
 
 -- ─────────────────────────────────────────────
@@ -410,6 +447,40 @@ set search_path = public as $$
   );
 $$;
 
+-- Permission-based helpers (preferred over role).
+create or replace function public.can_add_to_album(_album_id uuid, _user_id uuid)
+returns boolean language sql security definer stable
+set search_path = public as $$
+  select exists (
+    select 1 from public.album_members
+    where album_id = _album_id
+      and member   = _user_id
+      and (role = 'owner' or can_add_photos = true)
+  );
+$$;
+
+create or replace function public.can_remove_from_album(_album_id uuid, _user_id uuid)
+returns boolean language sql security definer stable
+set search_path = public as $$
+  select exists (
+    select 1 from public.album_members
+    where album_id = _album_id
+      and member   = _user_id
+      and (role = 'owner' or can_remove_photos = true)
+  );
+$$;
+
+create or replace function public.can_invite_to_album(_album_id uuid, _user_id uuid)
+returns boolean language sql security definer stable
+set search_path = public as $$
+  select exists (
+    select 1 from public.album_members
+    where album_id = _album_id
+      and member   = _user_id
+      and (role = 'owner' or can_invite = true)
+  );
+$$;
+
 create or replace function public.is_album_owner(_album_id uuid, _user_id uuid)
 returns boolean language sql security definer stable
 set search_path = public as $$
@@ -422,9 +493,15 @@ $$;
 revoke all on function public.is_album_member(uuid, uuid) from public;
 revoke all on function public.is_album_editor(uuid, uuid) from public;
 revoke all on function public.is_album_owner(uuid, uuid)  from public;
+revoke all on function public.can_add_to_album(uuid, uuid)    from public;
+revoke all on function public.can_remove_from_album(uuid, uuid) from public;
+revoke all on function public.can_invite_to_album(uuid, uuid)   from public;
 grant execute on function public.is_album_member(uuid, uuid) to authenticated;
 grant execute on function public.is_album_editor(uuid, uuid) to authenticated;
 grant execute on function public.is_album_owner(uuid, uuid)  to authenticated;
+grant execute on function public.can_add_to_album(uuid, uuid)    to authenticated;
+grant execute on function public.can_remove_from_album(uuid, uuid) to authenticated;
+grant execute on function public.can_invite_to_album(uuid, uuid)   to authenticated;
 
 
 -- profiles ----------------------------------------------------
@@ -491,32 +568,42 @@ create policy "albums owner delete" on public.albums for delete using (auth.uid(
 drop policy if exists "album_photos member read"    on public.album_photos;
 drop policy if exists "album_photos editor write"   on public.album_photos;
 drop policy if exists "album_photos editor delete"  on public.album_photos;
+drop policy if exists "album_photos perm write"     on public.album_photos;
+drop policy if exists "album_photos perm delete"    on public.album_photos;
 create policy "album_photos member read"   on public.album_photos for select
   using (public.is_album_member(album_id, auth.uid()));
-create policy "album_photos editor write"  on public.album_photos for insert
-  with check (public.is_album_editor(album_id, auth.uid()));
-create policy "album_photos editor delete" on public.album_photos for delete
-  using (public.is_album_editor(album_id, auth.uid()));
+-- Permission-based: any member with can_add_photos (or owner) may insert.
+create policy "album_photos perm write"  on public.album_photos for insert
+  with check (public.can_add_to_album(album_id, auth.uid()));
+-- Owner / can_remove_photos / OR the user who originally added the photo can delete.
+create policy "album_photos perm delete" on public.album_photos for delete
+  using (
+    public.is_album_owner(album_id, auth.uid())
+    or added_by = auth.uid()
+    or public.can_remove_from_album(album_id, auth.uid())
+  );
 
 drop policy if exists "album_members member read"    on public.album_members;
 drop policy if exists "album_members self join"      on public.album_members;
 drop policy if exists "album_members owner invite"   on public.album_members;
 drop policy if exists "album_members owner manage"   on public.album_members;
 drop policy if exists "album_members self leave"     on public.album_members;
+drop policy if exists "album_members inviter invite" on public.album_members;
 -- A member sees: their own row + every row of any album they're in.
--- The helper bypasses RLS so this no longer self-references.
 create policy "album_members member read" on public.album_members for select using (
   member = auth.uid()
   or public.is_album_member(album_id, auth.uid())
 );
+-- Self-join via invite code: anyone can insert their own membership row.
 create policy "album_members self join" on public.album_members for insert with check (
   member = auth.uid() and role = 'player'
 );
--- Owners may insert other members with any role (player/editor).
-create policy "album_members owner invite" on public.album_members for insert with check (
-  public.is_album_owner(album_id, auth.uid())
+-- Owners (or members with can_invite) may insert other members.
+create policy "album_members inviter invite" on public.album_members for insert with check (
+  public.can_invite_to_album(album_id, auth.uid())
   and role in ('player','editor')
 );
+-- Only the owner may change permissions / role of other members.
 create policy "album_members owner manage" on public.album_members for update using (
   public.is_album_owner(album_id, auth.uid())
 );
@@ -524,6 +611,18 @@ create policy "album_members self leave" on public.album_members for delete usin
   member = auth.uid()
   or public.is_album_owner(album_id, auth.uid())
 );
+
+-- album_activity: any member may read; any member may insert their own actor row.
+drop policy if exists "album_activity member read"  on public.album_activity;
+drop policy if exists "album_activity actor write"  on public.album_activity;
+create policy "album_activity member read" on public.album_activity for select
+  using (public.is_album_member(album_id, auth.uid()));
+create policy "album_activity actor write" on public.album_activity for insert
+  with check (
+    actor = auth.uid()
+    and public.is_album_member(album_id, auth.uid())
+  );
+alter table public.album_activity enable row level security;
 
 
 -- lobbies / sessions / guesses --------------------------------
@@ -545,6 +644,17 @@ drop policy if exists "season public read"  on public.season_scores;
 create policy "daily public read"  on public.daily_scores  for select using (true);
 create policy "daily self write"   on public.daily_scores  for insert with check (auth.uid() = player);
 create policy "season public read" on public.season_scores for select using (true);
+
+-- album_scores: any album member can read scores; players write their own.
+drop policy if exists "album_scores member read" on public.album_scores;
+drop policy if exists "album_scores self write"  on public.album_scores;
+drop policy if exists "album_scores self update" on public.album_scores;
+create policy "album_scores member read" on public.album_scores for select
+  using (public.is_album_member(album_id, auth.uid()));
+create policy "album_scores self write"  on public.album_scores for insert
+  with check (auth.uid() = player and public.is_album_member(album_id, auth.uid()));
+create policy "album_scores self update" on public.album_scores for update
+  using (auth.uid() = player);
 
 
 -- duel rooms --------------------------------------------------

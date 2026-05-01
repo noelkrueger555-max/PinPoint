@@ -246,6 +246,12 @@ export default function Game({ mode = "classic", laneId, albumId }: GameProps) {
             submitDailyScore(today, totalScore).catch(() => {});
           });
       }
+      // Album mode: submit personal best to album leaderboard.
+      if (mode === "album" && albumId && isCloudEnabled()) {
+        import("@/lib/albums").then(({ submitAlbumScore }) => {
+          submitAlbumScore(albumId, totalScore, photos.length).catch(() => {});
+        });
+      }
       // Achievement evaluation (local-only)
       const allGuesses = [...guesses];
       const bestDistanceKm = allGuesses.length ? Math.min(...allGuesses.map((g) => g.distanceKm)) : undefined;

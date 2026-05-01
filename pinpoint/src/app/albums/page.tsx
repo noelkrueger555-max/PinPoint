@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Users, Image as ImageIcon, KeyRound, Play, X } from "lucide-react";
+import { Plus, Users, Image as ImageIcon, KeyRound, Play, X, Star } from "lucide-react";
 import {
   createAlbum,
   joinAlbumByCode,
@@ -22,6 +22,34 @@ export default function AlbumsPage() {
   const [description, setDescription] = useState("");
   const [joining, setJoining] = useState(false);
   const [joinCode, setJoinCode] = useState("");
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
+
+  // Load favorites from localStorage.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = localStorage.getItem("album:favs");
+      if (raw) setFavorites(new Set(JSON.parse(raw) as string[]));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const toggleFavorite = (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setFavorites((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try {
+        localStorage.setItem("album:favs", JSON.stringify([...next]));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
 
   const load = async () => {
     setLoading(true);
@@ -137,13 +165,32 @@ export default function AlbumsPage() {
           </div>
         ) : (
           <div className="mt-10 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {albums.map((a, i) => (
+            {[...albums]
+              .sort((a, b) => {
+                const fa = favorites.has(a.id) ? 1 : 0;
+                const fb = favorites.has(b.id) ? 1 : 0;
+                return fb - fa;
+              })
+              .map((a, i) => (
               <Link
                 key={a.id}
                 href={`/albums/${a.id}`}
-                className="paper-card overflow-hidden flex flex-col no-underline text-ink hover:shadow-[8px_8px_0_var(--ink)] transition-shadow"
+                className="paper-card overflow-hidden flex flex-col no-underline text-ink hover:shadow-[8px_8px_0_var(--ink)] transition-shadow relative"
                 style={{ transform: `rotate(${i % 2 === 0 ? -0.3 : 0.3}deg)` }}
               >
+                <button
+                  type="button"
+                  onClick={(e) => toggleFavorite(a.id, e)}
+                  className="absolute top-2 right-2 z-10 w-8 h-8 rounded-full border-2 border-ink bg-paper flex items-center justify-center hover:scale-110 transition-transform"
+                  title={favorites.has(a.id) ? "Favorit entfernen" : "Als Favorit markieren"}
+                  aria-label="Favorit"
+                >
+                  <Star
+                    className="w-4 h-4"
+                    fill={favorites.has(a.id) ? "var(--mustard)" : "none"}
+                    style={{ color: favorites.has(a.id) ? "var(--mustard)" : "var(--ink-mute)" }}
+                  />
+                </button>
                 <div className="h-40 bg-paper-warm border-b-2 border-ink flex items-center justify-center">
                   <ImageIcon className="w-12 h-12 text-ink-mute opacity-30" />
                 </div>

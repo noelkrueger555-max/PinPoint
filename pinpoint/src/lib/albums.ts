@@ -22,9 +22,16 @@ export interface Album {
   photo_count?: number;
   member_count?: number;
   my_role?: AlbumRole;
+  my_permissions?: AlbumPermissions;
 }
 
 export type AlbumRole = "owner" | "editor" | "player";
+
+export interface AlbumPermissions {
+  can_add_photos: boolean;
+  can_remove_photos: boolean;
+  can_invite: boolean;
+}
 
 export interface AlbumMember {
   member: string;
@@ -33,6 +40,29 @@ export interface AlbumMember {
   display_name: string;
   username: string | null;
   avatar_url: string | null;
+  can_add_photos: boolean;
+  can_remove_photos: boolean;
+  can_invite: boolean;
+}
+
+export type AlbumActivityKind =
+  | "joined"
+  | "left"
+  | "photo_added"
+  | "photo_removed"
+  | "renamed"
+  | "invited"
+  | "permissions_changed"
+  | "removed_member";
+
+export interface AlbumActivity {
+  id: string;
+  album_id: string;
+  actor: string | null;
+  kind: AlbumActivityKind;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+  actor_name?: string | null;
 }
 
 export interface AlbumPhotoRef {
@@ -217,6 +247,7 @@ export async function joinAlbumByCode(code: string): Promise<Album> {
   if (error && !error.message.toLowerCase().includes("duplicate")) {
     throw error;
   }
+  if (!error) await logAlbumActivity(album.id, "joined", null);
   return album;
 }
 
@@ -272,6 +303,33 @@ export async function setMemberRole(args: {
   if (error) throw error;
 }
 
+export async function setMemberPermissions(args: {
+  albumId: string;
+  memberId: string;
+  permissions: Partial<AlbumPermissions>;
+}): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) throw new Error("Cloud-Modus nicht konfiguriert.");
+  const patch: Record<string, boolean> = {};
+  if (typeof args.permissions.can_add_photos === "boolean")
+    patch.can_add_photos = args.permissions.can_add_photos;
+  if (typeof args.permissions.can_remove_photos === "boolean")
+    patch.can_remove_photos = args.permissions.can_remove_photos;
+  if (typeof args.permissions.can_invite === "boolean")
+    patch.can_invite = args.permissions.can_invite;
+  if (Object.keys(patch).length === 0) return;
+  const { error } = await sb
+    .from("album_members")
+    .update(patch)
+    .eq("album_id", args.albumId)
+    .eq("member", args.memberId);
+  if (error) throw error;
+  await logAlbumActivity(args.albumId, "permissions_changed", {
+    member: args.memberId,
+    ...patch,
+  });
+}
+
 export async function removeMember(albumId: string, memberId: string): Promise<void> {
   const sb = getSupabase();
   if (!sb) throw new Error("Cloud-Modus nicht konfiguriert.");
@@ -281,6 +339,7 @@ export async function removeMember(albumId: string, memberId: string): Promise<v
     .eq("album_id", albumId)
     .eq("member", memberId);
   if (error) throw error;
+  await logAlbumActivity(albumId, "removed_member", { member: memberId });
 }
 
 export async function listAlbumMembers(albumId: string): Promise<AlbumMember[]> {
@@ -288,7 +347,7 @@ export async function listAlbumMembers(albumId: string): Promise<AlbumMember[]> 
   if (!sb) return [];
   const { data: rows, error } = await sb
     .from("album_members")
-    .select("member, role, joined_at")
+    .select("member, role, joined_at, can_add_photos, can_remove_photos, can_invite")
     .eq("album_id", albumId);
   if (error || !rows) return [];
 
@@ -304,7 +363,14 @@ export async function listAlbumMembers(albumId: string): Promise<AlbumMember[]> 
       p as { id: string; display_name: string; username: string | null; avatar_url: string | null },
     ])
   );
-  return (rows as { member: string; role: AlbumRole; joined_at: string }[]).map((r) => {
+  return (rows as Array<{
+    member: string;
+    role: AlbumRole;
+    joined_at: string;
+    can_add_photos: boolean;
+    can_remove_photos: boolean;
+    can_invite: boolean;
+  }>).map((r) => {
     const p = pm.get(r.member);
     return {
       member: r.member,
@@ -313,6 +379,9 @@ export async function listAlbumMembers(albumId: string): Promise<AlbumMember[]> 
       display_name: p?.display_name ?? "?",
       username: p?.username ?? null,
       avatar_url: p?.avatar_url ?? null,
+      can_add_photos: r.can_add_photos,
+      can_remove_photos: r.can_remove_photos,
+      can_invite: r.can_invite,
     };
   });
 }
@@ -362,6 +431,34 @@ export async function addPhotosToAlbum(albumId: string, photoIds: string[]): Pro
   const me = u.user?.id;
   if (!me) throw new Error("Bitte zuerst anmelden.");
 
+  // Auto-sync any photos that aren't yet in the cloud. Without this, the
+  // album_photos insert FK-violates for newly-uploaded local photos that
+  // members try to contribute before running a full cloud sync.
+  const { data: existing } = await sb
+    .from("photos")
+    .select("id")
+    .in("id", photoIds);
+  const existingIds = new Set((existing ?? []).map((r) => (r as { id: string }).id));
+  const missing = photoIds.filter((pid) => !existingIds.has(pid));
+  if (missing.length > 0) {
+    const { uploadPhoto } = await import("./cloud-sync");
+    for (const pid of missing) {
+      const p = await getPhoto(pid);
+      if (!p) {
+        throw new Error(`Foto ${pid.slice(0, 8)} nicht lokal verfügbar.`);
+      }
+      try {
+        await uploadPhoto(p);
+      } catch (e) {
+        throw new Error(
+          `Foto „${p.caption || pid.slice(0, 8)}" konnte nicht hochgeladen werden: ${
+            e instanceof Error ? e.message : "Fehler"
+          }`
+        );
+      }
+    }
+  }
+
   // Find next position
   const { data: max } = await sb
     .from("album_photos")
@@ -383,6 +480,7 @@ export async function addPhotosToAlbum(albumId: string, photoIds: string[]): Pro
     .from("album_photos")
     .upsert(rows, { onConflict: "album_id,photo_id", ignoreDuplicates: true });
   if (error) throw error;
+  await logAlbumActivity(albumId, "photo_added", { count: photoIds.length });
 }
 
 export async function removePhotoFromAlbum(albumId: string, photoId: string): Promise<void> {
@@ -394,6 +492,134 @@ export async function removePhotoFromAlbum(albumId: string, photoId: string): Pr
     .eq("album_id", albumId)
     .eq("photo_id", photoId);
   if (error) throw error;
+  await logAlbumActivity(albumId, "photo_removed", { photo_id: photoId });
+}
+
+// ─────────────────────────────────────────────
+// Activity log
+// ─────────────────────────────────────────────
+async function logAlbumActivity(
+  albumId: string,
+  kind: AlbumActivityKind,
+  payload: Record<string, unknown> | null
+): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { data: u } = await sb.auth.getUser();
+  const actor = u.user?.id;
+  if (!actor) return;
+  await sb.from("album_activity").insert({
+    album_id: albumId,
+    actor,
+    kind,
+    payload,
+  });
+}
+
+export async function listAlbumActivity(
+  albumId: string,
+  limit = 30
+): Promise<AlbumActivity[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data, error } = await sb
+    .from("album_activity")
+    .select("id, album_id, actor, kind, payload, created_at")
+    .eq("album_id", albumId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error || !data) return [];
+  const rows = data as AlbumActivity[];
+  const ids = Array.from(new Set(rows.map((r) => r.actor).filter((x): x is string => !!x)));
+  if (ids.length === 0) return rows;
+  const { data: profs } = await sb
+    .from("profiles")
+    .select("id, display_name")
+    .in("id", ids);
+  const pm = new Map((profs ?? []).map((p) => [(p as { id: string }).id, (p as { display_name: string }).display_name]));
+  return rows.map((r) => ({
+    ...r,
+    actor_name: r.actor ? pm.get(r.actor) ?? null : null,
+  }));
+}
+
+// ─────────────────────────────────────────────
+// Album leaderboard
+// ─────────────────────────────────────────────
+export interface AlbumScoreRow {
+  player: string;
+  best_score: number;
+  rounds: number;
+  updated_at: string;
+  display_name: string;
+  username: string | null;
+}
+
+export async function submitAlbumScore(
+  albumId: string,
+  score: number,
+  rounds: number
+): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { data: u } = await sb.auth.getUser();
+  const me = u.user?.id;
+  if (!me) return;
+  // Read existing best
+  const { data: existing } = await sb
+    .from("album_scores")
+    .select("best_score")
+    .eq("album_id", albumId)
+    .eq("player", me)
+    .maybeSingle();
+  const prev = (existing as { best_score: number } | null)?.best_score ?? 0;
+  if (score <= prev) return;
+  await sb.from("album_scores").upsert(
+    {
+      album_id: albumId,
+      player: me,
+      best_score: score,
+      rounds,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "album_id,player" }
+  );
+}
+
+export async function listAlbumScores(albumId: string, limit = 10): Promise<AlbumScoreRow[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data: rows } = await sb
+    .from("album_scores")
+    .select("player, best_score, rounds, updated_at")
+    .eq("album_id", albumId)
+    .order("best_score", { ascending: false })
+    .limit(limit);
+  if (!rows || rows.length === 0) return [];
+  const ids = (rows as { player: string }[]).map((r) => r.player);
+  const { data: profs } = await sb
+    .from("profiles")
+    .select("id, display_name, username")
+    .in("id", ids);
+  const pm = new Map(
+    (profs ?? []).map((p) => [
+      (p as { id: string }).id,
+      p as { id: string; display_name: string; username: string | null },
+    ])
+  );
+  return (rows as Array<{ player: string; best_score: number; rounds: number; updated_at: string }>).map(
+    (r) => {
+      const prof = pm.get(r.player);
+      return {
+        player: r.player,
+        best_score: r.best_score,
+        rounds: r.rounds,
+        updated_at: r.updated_at,
+        display_name: prof?.display_name ?? "?",
+        username: prof?.username ?? null,
+      };
+    }
+  );
 }
 
 export async function getAlbum(id: string): Promise<Album | null> {
@@ -411,11 +637,28 @@ export async function getAlbum(id: string): Promise<Album | null> {
   if (me) {
     const { data: m } = await sb
       .from("album_members")
-      .select("role")
+      .select("role, can_add_photos, can_remove_photos, can_invite")
       .eq("album_id", id)
       .eq("member", me)
       .maybeSingle();
-    if (m) myRole = (m as { role: AlbumRole }).role;
+    if (m) {
+      const row = m as {
+        role: AlbumRole;
+        can_add_photos: boolean;
+        can_remove_photos: boolean;
+        can_invite: boolean;
+      };
+      myRole = row.role;
+      return {
+        ...(data as Album),
+        my_role: myRole,
+        my_permissions: {
+          can_add_photos: row.can_add_photos,
+          can_remove_photos: row.can_remove_photos,
+          can_invite: row.can_invite,
+        },
+      };
+    }
   }
   return { ...(data as Album), my_role: myRole };
 }

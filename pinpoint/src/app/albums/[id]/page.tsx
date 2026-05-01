@@ -17,6 +17,12 @@ import {
   Pencil,
   Save,
   Share2,
+  Activity,
+  ImagePlus,
+  ImageMinus,
+  UserCog,
+  Trophy,
+  Sparkles,
 } from "lucide-react";
 import {
   getAlbum,
@@ -25,14 +31,18 @@ import {
   addPhotosToAlbum,
   removePhotoFromAlbum,
   removeMember,
-  setMemberRole,
+  setMemberPermissions,
   inviteFriendToAlbum,
   leaveAlbum,
   deleteAlbum,
   updateAlbum,
+  listAlbumActivity,
+  listAlbumScores,
   type Album,
   type AlbumMember,
   type AlbumPhotoRef,
+  type AlbumActivity,
+  type AlbumScoreRow,
 } from "@/lib/albums";
 import { listFriends, type FriendRow } from "@/lib/friends";
 import { getSupabase } from "@/lib/supabase";
@@ -68,17 +78,23 @@ function AlbumDetail({ id }: { id: string }) {
   const [editTitle, setEditTitle] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [copied, setCopied] = useState(false);
+  const [activity, setActivity] = useState<AlbumActivity[]>([]);
+  const [scores, setScores] = useState<AlbumScoreRow[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [a, ps, ms] = await Promise.all([
+    const [a, ps, ms, act, sc] = await Promise.all([
       getAlbum(id),
       listAlbumPhotos(id),
       listAlbumMembers(id),
+      listAlbumActivity(id, 20),
+      listAlbumScores(id, 10),
     ]);
     setAlbum(a);
     setPhotos(ps);
     setMembers(ms);
+    setActivity(act);
+    setScores(sc);
     if (a) {
       setEditTitle(a.title);
       setEditDesc(a.description ?? "");
@@ -117,7 +133,11 @@ function AlbumDetail({ id }: { id: string }) {
     };
   }, [photos]);
 
-  const canEdit = album?.my_role === "owner" || album?.my_role === "editor";
+  const canEdit =
+    album?.my_role === "owner" ||
+    album?.my_permissions?.can_add_photos === true;
+  const canInvite =
+    album?.my_role === "owner" || album?.my_permissions?.can_invite === true;
   const isOwner = album?.my_role === "owner";
 
   const copyCode = async () => {
@@ -304,7 +324,7 @@ function AlbumDetail({ id }: { id: string }) {
                 <span className="hidden sm:inline">Teilen</span>
               </button>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               {photos.length > 0 && (
                 <Link
                   href={`/play/album/${album.id}`}
@@ -312,6 +332,16 @@ function AlbumDetail({ id }: { id: string }) {
                 >
                   <Play className="w-4 h-4" />
                   Spielen
+                </Link>
+              )}
+              {photos.length >= 5 && (
+                <Link
+                  href={`/share?album=${album.id}`}
+                  className="btn-ghost no-underline"
+                  title="Lobby mit diesem Album öffnen"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span className="hidden sm:inline">Mit Freunden</span>
                 </Link>
               )}
               {isOwner && !editing && (
@@ -395,7 +425,7 @@ function AlbumDetail({ id }: { id: string }) {
             <h2 className="font-display font-bold text-2xl tracking-tight">
               Mitglieder · <span className="text-ink-mute">{members.length}</span>
             </h2>
-            {isOwner && (
+            {canInvite && (
               <button onClick={() => setInviting(true)} className="btn-pill-dark">
                 <UserPlus className="w-4 h-4" />
                 Freund einladen
@@ -405,66 +435,72 @@ function AlbumDetail({ id }: { id: string }) {
 
           <div className="paper-card-soft divide-y-2 divide-ink/10">
             {members.map((m) => (
-              <div
+              <MemberRow
                 key={m.member}
-                className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 flex-wrap"
-              >
-                <Users className="w-4 h-4 text-ink-mute" />
-                <div className="flex-1 min-w-0">
-                  <div className="font-display font-bold truncate">
-                    {m.display_name}
-                  </div>
-                  {m.username && (
-                    <div className="text-xs font-mono text-ink-mute truncate">
-                      @{m.username}
-                    </div>
-                  )}
-                </div>
-                <span className="tag-pin text-[10px]">{m.role}</span>
-                {isOwner && m.role !== "owner" && (
-                  <>
-                    <select
-                      value={m.role}
-                      onChange={async (e) => {
-                        try {
-                          await setMemberRole({
-                            albumId: id,
-                            memberId: m.member,
-                            role: e.target.value as "editor" | "player",
-                          });
-                          toast.success("Rolle aktualisiert");
-                          await load();
-                        } catch (err) {
-                          toast.error((err as Error).message);
-                        }
-                      }}
-                      className="text-xs border-2 border-ink bg-paper-deep rounded px-2 py-1"
-                    >
-                      <option value="player">Spieler</option>
-                      <option value="editor">Editor</option>
-                    </select>
-                    <button
-                      onClick={async () => {
-                        if (!confirm("Mitglied entfernen?")) return;
-                        try {
-                          await removeMember(id, m.member);
-                          toast.success("Entfernt");
-                          await load();
-                        } catch (err) {
-                          toast.error((err as Error).message);
-                        }
-                      }}
-                      className="text-pin hover:scale-110 transition-transform"
-                      title="Entfernen"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </>
-                )}
-              </div>
+                albumId={id}
+                member={m}
+                isOwner={isOwner}
+                onChanged={load}
+              />
             ))}
           </div>
         </section>
+
+        {/* Leaderboard */}
+        {scores.length > 0 && (
+          <section className="mt-14">
+            <h2 className="font-display font-bold text-2xl tracking-tight mb-4 flex items-center gap-2">
+              <Trophy className="w-5 h-5" style={{ color: "var(--mustard)" }} />
+              Rangliste
+            </h2>
+            <div className="paper-card-soft divide-y-2 divide-ink/10">
+              {scores.map((s, i) => (
+                <div key={s.player} className="flex items-center gap-3 px-4 py-2.5">
+                  <div
+                    className="w-7 h-7 rounded-full border-2 border-ink flex items-center justify-center font-display font-black text-xs tabular-nums shrink-0"
+                    style={{
+                      background: i === 0 ? "var(--mustard)" : i < 3 ? "var(--paper-deep)" : "var(--paper)",
+                    }}
+                  >
+                    {i + 1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-display font-bold truncate">{s.display_name}</div>
+                    {s.username && (
+                      <div className="text-[11px] font-mono text-ink-mute truncate">@{s.username}</div>
+                    )}
+                  </div>
+                  <div className="font-display-wonk font-black text-xl tabular-nums" style={{ color: "var(--pin)" }}>
+                    {s.best_score.toLocaleString("de-DE")}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Activity feed */}
+        {activity.length > 0 && (
+          <section className="mt-14">
+            <h2 className="font-display font-bold text-2xl tracking-tight mb-4 flex items-center gap-2">
+              <Activity className="w-5 h-5 text-ink-mute" />
+              Aktivitäten
+            </h2>
+            <div className="paper-card-soft divide-y-2 divide-ink/10">
+              {activity.map((a) => (
+                <div key={a.id} className="px-4 py-2.5 text-sm flex items-start gap-2">
+                  <span className="font-mono text-[10px] uppercase text-ink-mute mt-0.5 shrink-0 tabular-nums">
+                    {timeAgo(a.created_at)}
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="font-display font-bold">{a.actor_name ?? "Jemand"}</span>{" "}
+                    <span className="text-ink-soft">{activityText(a)}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Danger zone */}
         <section className="mt-14 flex flex-wrap gap-3">
@@ -669,7 +705,11 @@ function InviteModal({
 }) {
   const [friends, setFriends] = useState<FriendRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [role, setRole] = useState<"player" | "editor">("player");
+  const [perms, setPerms] = useState({
+    can_add_photos: true,
+    can_remove_photos: false,
+    can_invite: false,
+  });
 
   useEffect(() => {
     listFriends()
@@ -679,7 +719,13 @@ function InviteModal({
 
   const invite = async (friendId: string) => {
     try {
-      await inviteFriendToAlbum({ albumId, friendId, role });
+      await inviteFriendToAlbum({ albumId, friendId, role: "player" });
+      // Apply chosen permissions immediately.
+      await setMemberPermissions({
+        albumId,
+        memberId: friendId,
+        permissions: perms,
+      });
       toast.success("Eingeladen");
       onInvited();
     } catch (err) {
@@ -714,15 +760,30 @@ function InviteModal({
         </div>
 
         <label className="text-xs font-mono uppercase tracking-wider text-ink-mute block mb-4">
-          Rolle
-          <select
-            value={role}
-            onChange={(e) => setRole(e.target.value as "player" | "editor")}
-            className="mt-1 w-full px-3 py-2 border-2 border-ink bg-paper-deep rounded text-sm font-sans normal-case tracking-normal"
-          >
-            <option value="player">Spieler (nur spielen)</option>
-            <option value="editor">Editor (Fotos verwalten)</option>
-          </select>
+          Berechtigungen
+          <div className="mt-2 paper-card-soft p-3 grid gap-2 normal-case tracking-normal font-sans">
+            <PermToggle
+              icon={<ImagePlus className="w-3.5 h-3.5" />}
+              label="Fotos hinzufügen"
+              hint="Eigene Fotos zum Album beitragen"
+              checked={perms.can_add_photos}
+              onChange={(v) => setPerms((p) => ({ ...p, can_add_photos: v }))}
+            />
+            <PermToggle
+              icon={<ImageMinus className="w-3.5 h-3.5" />}
+              label="Fotos entfernen"
+              hint="Auch fremde Fotos aus dem Album werfen"
+              checked={perms.can_remove_photos}
+              onChange={(v) => setPerms((p) => ({ ...p, can_remove_photos: v }))}
+            />
+            <PermToggle
+              icon={<UserPlus className="w-3.5 h-3.5" />}
+              label="Andere einladen"
+              hint="Weitere Freunde zum Album hinzufügen"
+              checked={perms.can_invite}
+              onChange={(v) => setPerms((p) => ({ ...p, can_invite: v }))}
+            />
+          </div>
         </label>
 
         {loading ? (
@@ -762,4 +823,190 @@ function InviteModal({
       </motion.div>
     </motion.div>
   );
+}
+
+// ─────────────────────────────────────────────
+// Members & permissions
+// ─────────────────────────────────────────────
+function MemberRow({
+  albumId,
+  member,
+  isOwner,
+  onChanged,
+}: {
+  albumId: string;
+  member: AlbumMember;
+  isOwner: boolean;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const isMemberOwner = member.role === "owner";
+  const togglePerm = async (key: "can_add_photos" | "can_remove_photos" | "can_invite", v: boolean) => {
+    try {
+      await setMemberPermissions({
+        albumId,
+        memberId: member.member,
+        permissions: { [key]: v },
+      });
+      onChanged();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+  return (
+    <div className="px-3 sm:px-5 py-3">
+      <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+        <Users className="w-4 h-4 text-ink-mute" />
+        <div className="flex-1 min-w-0">
+          <div className="font-display font-bold truncate">{member.display_name}</div>
+          {member.username && (
+            <div className="text-xs font-mono text-ink-mute truncate">@{member.username}</div>
+          )}
+        </div>
+        {isMemberOwner ? (
+          <span className="tag-pin text-[10px]">OWNER</span>
+        ) : (
+          <PermSummary member={member} />
+        )}
+        {isOwner && !isMemberOwner && (
+          <>
+            <button
+              onClick={() => setOpen((o) => !o)}
+              className="text-ink-mute hover:text-pin transition-colors"
+              title="Berechtigungen"
+              aria-label="Berechtigungen ändern"
+            >
+              <UserCog className="w-4 h-4" />
+            </button>
+            <button
+              onClick={async () => {
+                if (!confirm(`${member.display_name} entfernen?`)) return;
+                try {
+                  await removeMember(albumId, member.member);
+                  toast.success("Entfernt");
+                  onChanged();
+                } catch (err) {
+                  toast.error((err as Error).message);
+                }
+              }}
+              className="text-pin hover:scale-110 transition-transform"
+              title="Entfernen"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </>
+        )}
+      </div>
+      {isOwner && open && !isMemberOwner && (
+        <div className="mt-3 ml-6 paper-card-soft p-3 grid gap-2">
+          <PermToggle
+            icon={<ImagePlus className="w-3.5 h-3.5" />}
+            label="Fotos hinzufügen"
+            checked={member.can_add_photos}
+            onChange={(v) => togglePerm("can_add_photos", v)}
+          />
+          <PermToggle
+            icon={<ImageMinus className="w-3.5 h-3.5" />}
+            label="Fotos entfernen"
+            checked={member.can_remove_photos}
+            onChange={(v) => togglePerm("can_remove_photos", v)}
+          />
+          <PermToggle
+            icon={<UserPlus className="w-3.5 h-3.5" />}
+            label="Andere einladen"
+            checked={member.can_invite}
+            onChange={(v) => togglePerm("can_invite", v)}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PermSummary({ member }: { member: AlbumMember }) {
+  const flags = [
+    member.can_add_photos && "+",
+    member.can_remove_photos && "−",
+    member.can_invite && "★",
+  ].filter(Boolean) as string[];
+  if (flags.length === 0) {
+    return <span className="tag-pin text-[10px] opacity-60">NUR SPIELEN</span>;
+  }
+  return (
+    <span
+      className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 border-2 border-ink rounded bg-paper-deep"
+      title="+ darf hinzufügen · − darf entfernen · ★ darf einladen"
+    >
+      {flags.join(" ")}
+    </span>
+  );
+}
+
+function PermToggle({
+  icon,
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start gap-2 cursor-pointer select-none">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 w-4 h-4 accent-[var(--pin)] cursor-pointer"
+      />
+      <span className="flex-1 min-w-0">
+        <span className="text-sm font-display font-bold flex items-center gap-1.5">
+          {icon}
+          {label}
+        </span>
+        {hint && <span className="block text-[11px] text-ink-mute">{hint}</span>}
+      </span>
+    </label>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Activity helpers
+// ─────────────────────────────────────────────
+function activityText(a: AlbumActivity): string {
+  switch (a.kind) {
+    case "joined":
+      return "ist dem Album beigetreten";
+    case "left":
+      return "hat das Album verlassen";
+    case "photo_added": {
+      const c = (a.payload?.count as number | undefined) ?? 1;
+      return `hat ${c} Foto${c === 1 ? "" : "s"} hinzugefügt`;
+    }
+    case "photo_removed":
+      return "hat ein Foto entfernt";
+    case "renamed":
+      return "hat das Album umbenannt";
+    case "invited":
+      return "hat ein Mitglied eingeladen";
+    case "permissions_changed":
+      return "hat Berechtigungen angepasst";
+    case "removed_member":
+      return "hat ein Mitglied entfernt";
+    default:
+      return a.kind;
+  }
+}
+
+function timeAgo(iso: string): string {
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 60) return "gerade";
+  if (diff < 3600) return `${Math.floor(diff / 60)}min`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d`;
+  return new Date(iso).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
 }
